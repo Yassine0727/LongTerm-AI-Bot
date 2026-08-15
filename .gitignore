@@ -1,0 +1,44 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Environnement
+.env
+.env.local
+.env.*.local
+
+# Données
+data/
+session/
+*.db
+*.sqlite3
+*.log
+*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Fichiers sensibles du projet
+analyses.json
+portfolio_data.json
+price_history.json
+settings.json
+config.json
