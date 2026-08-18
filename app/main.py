@@ -31,7 +31,7 @@ app.add_middleware(
 # ===== SÉCURITÉ : HOSTS AUTORISÉS =====
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "*.ngrok.io", "*.trycloudflare.com", "your-domain.com"]
+    allowed_hosts=["*"]
 )
 
 app.include_router(router)
