@@ -14,7 +14,7 @@ from app.core.config import config
 logger = logging.getLogger(__name__)
 
 class BinanceService:
-    """Service multi-API avec prix, volume et pourcentage"""
+    """Service multi-API avec prix, volume et pourcentage pour BTC, ETH et GOLD"""
     
     def __init__(self):
         self.last_prices = {}
@@ -26,18 +26,20 @@ class BinanceService:
         }
         self.weekly_data = {}
         
-        # Cache
+        # Cache pour éviter trop de requêtes
         self.cache = {}
         self.cache_time = {}
         self.cache_duration = 30  # secondes
     
     async def _get_from_cache(self, symbol: str) -> Optional[Dict]:
+        """Récupérer le prix depuis le cache"""
         if symbol in self.cache and symbol in self.cache_time:
             if (datetime.now() - self.cache_time[symbol]).seconds < self.cache_duration:
                 return self.cache[symbol]
         return None
     
     def _save_to_cache(self, symbol: str, data: Dict):
+        """Sauvegarder le prix dans le cache"""
         self.cache[symbol] = data
         self.cache_time[symbol] = datetime.now()
     
@@ -50,7 +52,11 @@ class BinanceService:
                 logger.info(f"📊 {symbol}: ${cached['price']:,.2f} (cache)")
                 return cached
             
-            # Définir les APIs à essayer
+            # Cas spécial pour l'or
+            if symbol == "GOLD":
+                return await self._get_gold_details()
+            
+            # Définir les APIs à essayer pour BTC et ETH
             apis = self._get_apis_for_symbol(symbol)
             
             # Essayer chaque API
@@ -69,10 +75,12 @@ class BinanceService:
                     logger.warning(f"⚠️ {api_name} échoué: {e}")
                     continue
             
-            # Fallback
+            # Fallback : dernier prix connu
             if symbol in self.last_prices and self.last_prices[symbol] > 0:
+                logger.warning(f"⚠️ Utilisation du dernier prix connu: {symbol} = {self.last_prices[symbol]}")
                 return {"price": self.last_prices[symbol], "change_24h": 0, "volume": 0}
             
+            # Dernier fallback
             mock = {"BTC": {"price": 65000, "change_24h": 0, "volume": 0},
                     "ETH": {"price": 3500, "change_24h": 0, "volume": 0},
                     "GOLD": {"price": 2400, "change_24h": 0, "volume": 0}}
@@ -84,7 +92,56 @@ class BinanceService:
                 return {"price": self.last_prices[symbol], "change_24h": 0, "volume": 0}
             return {"price": 0, "change_24h": 0, "volume": 0}
     
+    async def _get_gold_details(self) -> Dict:
+        """Obtenir les détails de l'or depuis plusieurs sources"""
+        try:
+            gold_data = {"price": 0, "change_24h": 0, "volume": 0}
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Source 1: Gold-API pour le prix et la variation
+                try:
+                    response = await client.get("https://api.gold-api.com/price/XAU")
+                    if response.status_code == 200:
+                        data = response.json()
+                        gold_data["price"] = float(data.get("price", 0))
+                        gold_data["change_24h"] = float(data.get("change", 0))
+                        logger.info(f"📊 GOLD: ${gold_data['price']:,.2f} (via Gold-API)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Gold-API échoué: {e}")
+                
+                # Source 2: Binance XAUUSDT pour le prix et le volume (fallback)
+                try:
+                    response = await client.get(
+                        "https://api.binance.com/api/v3/ticker/24hr",
+                        params={"symbol": "XAUTUSDT"}
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if gold_data["price"] == 0:
+                            gold_data["price"] = float(data["lastPrice"])
+                            gold_data["change_24h"] = float(data["priceChangePercent"])
+                            logger.info(f"📊 GOLD: ${gold_data['price']:,.2f} (via Binance XAUUSDT)")
+                        gold_data["volume"] = float(data.get("volume", 0))
+                except Exception as e:
+                    logger.warning(f"⚠️ Binance XAUUSDT échoué: {e}")
+            
+            # Fallback final
+            if gold_data["price"] == 0:
+                gold_data["price"] = 2400.00
+                gold_data["change_24h"] = 0
+                gold_data["volume"] = 0
+                logger.warning(f"⚠️ Utilisation du prix fallback pour l'or: ${gold_data['price']}")
+            
+            self._save_to_cache("GOLD", gold_data)
+            self.last_prices["GOLD"] = gold_data["price"]
+            return gold_data
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur GOLD: {e}")
+            return {"price": 2400.00, "change_24h": 0, "volume": 0}
+    
     def _get_apis_for_symbol(self, symbol: str) -> list:
+        """Retourner la liste des APIs à essayer pour un symbole"""
         if symbol == "BTC":
             return [
                 ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", self._parse_kraken_btc),
@@ -97,13 +154,10 @@ class BinanceService:
                 ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko),
                 ("CoinCap", "https://api.coincap.io/v2/assets/ethereum", self._parse_coincap)
             ]
-        elif symbol == "GOLD":
-            return [
-                ("Gold-API", "https://api.gold-api.com/price/XAU", self._parse_gold)
-            ]
         return []
     
     def _parse_kraken_btc(self, data: dict) -> Dict:
+        """Parser Kraken pour BTC avec prix, volume et pourcentage"""
         try:
             result = data["result"]["XXBTZUSD"]
             price = float(result["c"][0])
@@ -119,6 +173,7 @@ class BinanceService:
             return {"price": 0, "change_24h": 0, "volume": 0}
     
     def _parse_kraken_eth(self, data: dict) -> Dict:
+        """Parser Kraken pour ETH avec prix, volume et pourcentage"""
         try:
             result = data["result"]["XETHZUSD"]
             price = float(result["c"][0])
@@ -134,6 +189,7 @@ class BinanceService:
             return {"price": 0, "change_24h": 0, "volume": 0}
     
     def _parse_coingecko(self, data: dict) -> Dict:
+        """Parser CoinGecko avec prix et pourcentage"""
         try:
             if "bitcoin" in data:
                 return {
@@ -152,6 +208,7 @@ class BinanceService:
             return {"price": 0, "change_24h": 0, "volume": 0}
     
     def _parse_coincap(self, data: dict) -> Dict:
+        """Parser CoinCap avec prix, volume et pourcentage"""
         try:
             return {
                 "price": float(data["data"]["priceUsd"]),
@@ -161,18 +218,8 @@ class BinanceService:
         except:
             return {"price": 0, "change_24h": 0, "volume": 0}
     
-    def _parse_gold(self, data: dict) -> Dict:
-        try:
-            return {
-                "price": float(data.get("price", 0)),
-                "change_24h": float(data.get("change", 0)),
-                "volume": 0
-            }
-        except:
-            return {"price": 0, "change_24h": 0, "volume": 0}
-    
     async def get_price(self, symbol: str) -> Dict:
-        """Obtenir le prix uniquement"""
+        """Obtenir le prix uniquement (pour compatibilité)"""
         result = await self.get_price_with_details(symbol)
         return {
             "symbol": symbol,
@@ -322,6 +369,7 @@ class BinanceService:
         return report
     
     async def get_weekly_report(self) -> Dict:
+        """Generer un rapport hebdomadaire (alias)"""
         return await self.get_detailed_weekly_report()
     
     async def get_portfolio_value(self, holdings: Dict[str, float]) -> Dict:
