@@ -14,27 +14,11 @@ from app.core.config import config
 logger = logging.getLogger(__name__)
 
 class BinanceService:
-    """Service pour recuperer les prix via Binance avec proxy"""
+    """Service pour recuperer les prix via Binance avec proxy Cloudflare"""
     
     def __init__(self):
-        # Miroirs Binance
-        self.base_urls = [
-            "https://api.binance.com",
-            "https://api1.binance.com",
-            "https://api2.binance.com", 
-            "https://api3.binance.com",
-            "https://api.binance.us",
-            "https://api.binance.vision",
-        ]
-        
-        # Proxies gratuits pour contourner le blocage
-        self.proxies = [
-            "http://45.138.80.105:8080",
-            "http://45.138.80.108:8080",
-            "http://45.138.80.109:8080",
-            "http://45.138.80.111:8080",
-            "http://45.138.80.112:8080",
-        ]
+        # Votre proxy Cloudflare
+        self.proxy_url = "https://binance-proxy.gjdfjdcfhjdgk.workers.dev"
         
         self.symbols = {
             "BTC": "BTCUSDT",
@@ -49,8 +33,6 @@ class BinanceService:
             "GOLD": float(getattr(config, 'ALERT_GOLD_THRESHOLD', 1.5))
         }
         self.weekly_data = {}
-        self.current_url_index = 0
-        self.current_proxy_index = 0
         
         # Headers pour imiter un navigateur
         self.headers = {
@@ -61,91 +43,68 @@ class BinanceService:
             "Connection": "keep-alive"
         }
     
-    def _get_next_url(self) -> str:
-        url = self.base_urls[self.current_url_index]
-        self.current_url_index = (self.current_url_index + 1) % len(self.base_urls)
-        return url
-    
-    def _get_next_proxy(self) -> Optional[str]:
-        if not self.proxies:
-            return None
-        proxy = self.proxies[self.current_proxy_index]
-        self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxies)
-        return proxy
-    
     async def get_price(self, symbol: str) -> Dict:
-        """Obtenir le prix depuis Binance avec proxy"""
+        """Obtenir le prix depuis Binance via Cloudflare Proxy"""
         try:
             if symbol not in self.symbols:
                 return {"symbol": symbol, "price": 0, "success": False}
             
             binance_symbol = self.symbols[symbol]
             
-            # Essayer avec différents miroirs et proxies
-            for attempt in range(10):
-                base_url = self._get_next_url()
-                proxy = self._get_next_proxy()
+            async with httpx.AsyncClient(
+                timeout=15.0,
+                headers=self.headers,
+                follow_redirects=True
+            ) as client:
+                # Utiliser le proxy Cloudflare
+                response = await client.get(
+                    f"{self.proxy_url}/api/v3/ticker/price",
+                    params={"symbol": binance_symbol}
+                )
                 
-                url = f"{base_url}/api/v3/ticker/price"
-                
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=15.0,
-                        proxies=proxy,
-                        headers=self.headers,
-                        follow_redirects=True
-                    ) as client:
-                        response = await client.get(url, params={"symbol": binance_symbol})
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            price = float(data["price"])
-                            logger.info(f"📊 {symbol}: ${price:,.2f} (via Binance)")
-                            self.last_prices[symbol] = price
-                            return {"symbol": symbol, "price": price, "success": True}
-                        
-                        elif response.status_code == 451:
-                            logger.warning(f"⚠️ Blocage 451 sur {base_url}, essai suivant...")
-                            continue
-                            
-                        elif response.status_code == 403:
-                            logger.warning(f"⚠️ Accès interdit sur {base_url}, essai suivant...")
-                            continue
-                            
-                except Exception as e:
-                    logger.warning(f"⚠️ Erreur sur {base_url} (proxy {proxy}): {e}")
-                    continue
+                if response.status_code == 200:
+                    data = response.json()
+                    if "price" in data:
+                        price = float(data["price"])
+                        logger.info(f"📊 {symbol}: ${price:,.2f} (via Cloudflare Proxy)")
+                        self.last_prices[symbol] = price
+                        return {"symbol": symbol, "price": price, "success": True}
+                    else:
+                        logger.warning(f"⚠️ Réponse inattendue: {data}")
+                else:
+                    logger.warning(f"⚠️ Erreur Cloudflare: {response.status_code}")
             
-            # Si Binance échoue, utiliser CoinGecko en fallback
-            logger.warning(f"⚠️ Binance échoué pour {symbol}, fallback CoinGecko")
+            # Fallback si le proxy échoue
             return await self._get_fallback_price(symbol)
                 
+        except httpx.TimeoutException:
+            logger.warning(f"⚠️ Timeout pour {symbol}, fallback...")
+            return await self._get_fallback_price(symbol)
+            
         except Exception as e:
             logger.error(f"❌ Erreur {symbol}: {e}")
             return await self._get_fallback_price(symbol)
     
     async def _get_fallback_price(self, symbol: str) -> Dict:
-        """Fallback vers CoinGecko si Binance échoue"""
+        """Fallback vers CoinCap si le proxy échoue"""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 if symbol == "BTC":
-                    response = await client.get(
-                        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-                    )
+                    response = await client.get("https://api.coincap.io/v2/assets/bitcoin")
                     if response.status_code == 200:
                         data = response.json()
-                        price = float(data["bitcoin"]["usd"])
-                        logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinGecko fallback)")
+                        price = float(data["data"]["priceUsd"])
+                        logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinCap fallback)")
+                        self.last_prices[symbol] = price
                         return {"symbol": symbol, "price": price, "success": True}
                 
                 elif symbol == "ETH":
-                    response = await client.get(
-                        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
-                    )
+                    response = await client.get("https://api.coincap.io/v2/assets/ethereum")
                     if response.status_code == 200:
                         data = response.json()
-                        price = float(data["ethereum"]["usd"])
-                        logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinGecko fallback)")
+                        price = float(data["data"]["priceUsd"])
+                        logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinCap fallback)")
+                        self.last_prices[symbol] = price
                         return {"symbol": symbol, "price": price, "success": True}
                 
                 elif symbol == "GOLD":
@@ -155,14 +114,18 @@ class BinanceService:
                         price = float(data.get("price", 0))
                         if price > 0:
                             logger.info(f"📊 {symbol}: ${price:,.2f} (via Gold-API fallback)")
+                            self.last_prices[symbol] = price
                             return {"symbol": symbol, "price": price, "success": True}
             
-            # Dernier fallback
+            # Dernier fallback: dernier prix connu
             if symbol in self.last_prices and self.last_prices[symbol] > 0:
+                logger.warning(f"⚠️ Utilisation du dernier prix connu: {symbol} = {self.last_prices[symbol]}")
                 return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
             
             mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
-            return {"symbol": symbol, "price": mock_prices.get(symbol, 0), "success": True}
+            price = mock_prices.get(symbol, 0)
+            logger.warning(f"⚠️ Utilisation du prix simulé pour {symbol}: ${price}")
+            return {"symbol": symbol, "price": price, "success": True}
             
         except Exception as e:
             logger.error(f"❌ Fallback error {symbol}: {e}")
@@ -170,9 +133,13 @@ class BinanceService:
             return {"symbol": symbol, "price": mock_prices.get(symbol, 0), "success": True}
     
     async def get_price_with_details(self, symbol: str) -> Dict:
+        """Obtenir le prix avec plus de détails"""
         price_data = await self.get_price(symbol)
-        if not price_data.get("success"):
+        if not price_data.get("success") or price_data.get("price", 0) == 0:
             return {"price": 0, "change_24h": 0, "volume": 0}
+        
+        # Sauvegarder le prix pour fallback
+        self.last_prices[symbol] = price_data["price"]
         
         data_24h = await self.get_24h_change(symbol)
         
@@ -183,38 +150,33 @@ class BinanceService:
         }
     
     async def get_24h_change(self, symbol: str) -> Dict:
+        """Obtenir la variation sur 24h via Cloudflare Proxy"""
         try:
-            for attempt in range(5):
-                base_url = self._get_next_url()
-                proxy = self._get_next_proxy()
+            if symbol not in self.symbols:
+                return {"symbol": symbol, "success": False}
+            
+            binance_symbol = self.symbols[symbol]
+            
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                headers=self.headers
+            ) as client:
+                response = await client.get(
+                    f"{self.proxy_url}/api/v3/ticker/24hr",
+                    params={"symbol": binance_symbol}
+                )
                 
-                url = f"{base_url}/api/v3/ticker/24hr"
-                
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=10.0,
-                        proxies=proxy,
-                        headers=self.headers
-                    ) as client:
-                        binance_symbol = self.symbols.get(symbol)
-                        if not binance_symbol:
-                            return {"symbol": symbol, "success": False}
-                        
-                        response = await client.get(url, params={"symbol": binance_symbol})
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            return {
-                                "symbol": symbol,
-                                "price": float(data["lastPrice"]),
-                                "change_24h": float(data["priceChangePercent"]),
-                                "high": float(data["highPrice"]),
-                                "low": float(data["lowPrice"]),
-                                "volume": float(data["volume"]),
-                                "success": True
-                            }
-                except:
-                    continue
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "symbol": symbol,
+                        "price": float(data["lastPrice"]),
+                        "change_24h": float(data["priceChangePercent"]),
+                        "high": float(data["highPrice"]),
+                        "low": float(data["lowPrice"]),
+                        "volume": float(data["volume"]),
+                        "success": True
+                    }
             
             return {"symbol": symbol, "success": False, "change_24h": 0}
             
@@ -223,44 +185,39 @@ class BinanceService:
             return {"symbol": symbol, "success": False, "change_24h": 0}
     
     async def get_historical_klines(self, symbol: str, interval: str = "1d", limit: int = 30) -> List[Dict]:
+        """Obtenir les donnees historiques via Cloudflare Proxy"""
         try:
-            for attempt in range(5):
-                base_url = self._get_next_url()
-                proxy = self._get_next_proxy()
+            if symbol not in self.symbols:
+                return []
+            
+            binance_symbol = self.symbols[symbol]
+            
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                headers=self.headers
+            ) as client:
+                response = await client.get(
+                    f"{self.proxy_url}/api/v3/klines",
+                    params={
+                        "symbol": binance_symbol,
+                        "interval": interval,
+                        "limit": limit
+                    }
+                )
                 
-                url = f"{base_url}/api/v3/klines"
-                
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=10.0,
-                        proxies=proxy,
-                        headers=self.headers
-                    ) as client:
-                        binance_symbol = self.symbols.get(symbol)
-                        if not binance_symbol:
-                            return []
-                        
-                        response = await client.get(url, params={
-                            "symbol": binance_symbol,
-                            "interval": interval,
-                            "limit": limit
-                        })
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            return [
-                                {
-                                    "timestamp": datetime.fromtimestamp(k[0]/1000).isoformat(),
-                                    "open": float(k[1]),
-                                    "high": float(k[2]),
-                                    "low": float(k[3]),
-                                    "close": float(k[4]),
-                                    "volume": float(k[5])
-                                }
-                                for k in data
-                            ]
-                except:
-                    continue
+                if response.status_code == 200:
+                    data = response.json()
+                    return [
+                        {
+                            "timestamp": datetime.fromtimestamp(k[0]/1000).isoformat(),
+                            "open": float(k[1]),
+                            "high": float(k[2]),
+                            "low": float(k[3]),
+                            "close": float(k[4]),
+                            "volume": float(k[5])
+                        }
+                        for k in data
+                    ]
             
             return []
             
@@ -269,14 +226,15 @@ class BinanceService:
             return []
     
     async def check_and_alert(self, symbol: str) -> Optional[Dict]:
+        """Verifier si une alerte doit etre declenchee"""
         try:
             current = await self.get_price(symbol)
-            if not current.get("success"):
+            if not current.get("success") or current.get("price", 0) == 0:
                 return None
             
             current_price = current["price"]
             
-            if symbol not in self.last_prices:
+            if symbol not in self.last_prices or self.last_prices[symbol] == 0:
                 self.last_prices[symbol] = current_price
                 return None
             
@@ -309,6 +267,7 @@ class BinanceService:
             return None
     
     async def get_detailed_weekly_report(self) -> Dict:
+        """Generer un rapport hebdomadaire detaille"""
         report = {
             "date": datetime.now().isoformat(),
             "week_start": (datetime.now() - timedelta(days=7)).isoformat(),
@@ -383,15 +342,17 @@ class BinanceService:
         return report
     
     async def get_weekly_report(self) -> Dict:
+        """Generer un rapport hebdomadaire (alias)"""
         return await self.get_detailed_weekly_report()
     
     async def get_portfolio_value(self, holdings: Dict[str, float]) -> Dict:
+        """Calculer la valeur du portefeuille"""
         total_value = 0
         details = {}
         
         for symbol, quantity in holdings.items():
             price_data = await self.get_price(symbol)
-            if price_data.get("success"):
+            if price_data.get("success") and price_data.get("price", 0) > 0:
                 value = price_data["price"] * quantity
                 total_value += value
                 details[symbol] = {
