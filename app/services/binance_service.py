@@ -109,7 +109,7 @@ class BinanceService:
                 except Exception as e:
                     logger.warning(f"⚠️ Gold-API échoué: {e}")
                 
-                # Source 2: Binance XAUUSDT pour le prix et le volume (fallback)
+                # Source 2: Binance XAUUSDT pour le prix, volume et variation (fallback)
                 try:
                     response = await client.get(
                         "https://api.binance.com/api/v3/ticker/24hr",
@@ -121,7 +121,9 @@ class BinanceService:
                             gold_data["price"] = float(data["lastPrice"])
                             gold_data["change_24h"] = float(data["priceChangePercent"])
                             logger.info(f"📊 GOLD: ${gold_data['price']:,.2f} (via Binance XAUUSDT)")
+                        # Récupérer le volume depuis Binance
                         gold_data["volume"] = float(data.get("volume", 0))
+                        logger.info(f"📊 GOLD Volume: {gold_data['volume']:,.0f}")
                 except Exception as e:
                     logger.warning(f"⚠️ Binance XAUUSDT échoué: {e}")
             
