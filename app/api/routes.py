@@ -24,7 +24,7 @@ bot_running = False
 
 # ===== TÂCHE DE FOND POUR LA VÉRIFICATION 6H =====
 async def price_check_and_save():
-    """Verifier les prix toutes les 1h et enregistrer toutes les 6h"""
+    """Verifier les prix toutes les 1h et enregistrer toutes les 3h"""
     from app.services.binance_service import BinanceService
     binance = BinanceService()
     
@@ -48,15 +48,15 @@ async def price_check_and_save():
                     await recorder.save_prices(prices)
                     first_run = False
                     logger.info("✅ Premier enregistrement effectue au demarrage !")
-                    logger.info("⏳ Prochain enregistrement dans 6 heures...")
+                    logger.info("⏳ Prochain enregistrement dans 3 heures...")
                 else:
                     check_count += 1
-                    if check_count >= 6:
+                    if check_count >= 3:
                         await recorder.save_prices(prices)
                         check_count = 0
-                        logger.info("✅ Prix enregistres (cycle 6h)")
+                        logger.info("✅ Prix enregistres (cycle 3h)")
                     else:
-                        logger.info(f"⏳ Prochain enregistrement dans {6 - check_count} heure(s)")
+                        logger.info(f"⏳ Prochain enregistrement dans {3 - check_count} heure(s)")
                 
                 logger.info("✅ Verification terminee")
             else:
