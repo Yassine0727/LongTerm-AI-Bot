@@ -15,15 +15,15 @@ from app.core.config import config
 logger = logging.getLogger(__name__)
 
 class BinanceService:
-    """Service pour recuperer les prix et donnees depuis CoinGecko (alternative à Binance)"""
+    """Service pour recuperer les prix et donnees depuis CoinCap (alternative à Binance)"""
     
     def __init__(self):
-        # CoinGecko API endpoints
-        self.base_url = "https://api.coingecko.com/api/v3"
+        # CoinCap API endpoint
+        self.base_url = "https://api.coincap.io/v2"
         self.symbols = {
             "BTC": "bitcoin",
             "ETH": "ethereum",
-            "GOLD": "gold"
+            "GOLD": "gold"  # CoinCap ne supporte pas l'or directement
         }
         
         self.last_prices = {}
@@ -50,76 +50,55 @@ class BinanceService:
         return self.base_url
     
     async def get_price(self, symbol: str) -> Dict:
-        """Obtenir le prix actuel depuis CoinGecko"""
+        """Obtenir le prix actuel depuis CoinCap"""
         try:
             if symbol not in self.symbols:
                 return {"symbol": symbol, "price": 0, "success": False}
             
-            gecko_id = self.symbols[symbol]
-            
-            # Essayer CoinGecko
-            for attempt in range(3):
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=15.0,
-                        headers=self.headers,
-                        follow_redirects=True
-                    ) as client:
-                        if symbol == "GOLD":
-                            # Essayer gold-api.com pour l'or
-                            response = await client.get("https://api.gold-api.com/price/XAU")
-                            if response.status_code == 200:
-                                data = response.json()
-                                price = float(data.get("price", 0))
-                                if price > 0:
-                                    logger.info(f"📊 {symbol}: ${price:,.2f} (via Gold-API)")
-                                    return {"symbol": symbol, "price": price, "success": True}
-                            
-                            # Fallback: prix approximatif
-                            fallback_price = 2400.00
-                            logger.warning(f"⚠️ Utilisation du prix fallback pour l'or: ${fallback_price}")
-                            return {"symbol": symbol, "price": fallback_price, "success": True}
-                        
+            async with httpx.AsyncClient(
+                timeout=15.0,
+                headers=self.headers,
+                follow_redirects=True
+            ) as client:
+                if symbol == "GOLD":
+                    # Or : utiliser gold-api.com
+                    response = await client.get("https://api.gold-api.com/price/XAU")
+                    if response.status_code == 200:
+                        data = response.json()
+                        price = float(data.get("price", 0))
+                        if price > 0:
+                            logger.info(f"📊 {symbol}: ${price:,.2f} (via Gold-API)")
+                            self.last_prices[symbol] = price
+                            return {"symbol": symbol, "price": price, "success": True}
+                    
+                    # Fallback pour l'or
+                    fallback_price = 2400.00
+                    logger.warning(f"⚠️ Utilisation du prix fallback pour l'or: ${fallback_price}")
+                    return {"symbol": symbol, "price": fallback_price, "success": True}
+                
+                else:
+                    # CoinCap pour BTC et ETH
+                    gecko_id = self.symbols[symbol]
+                    response = await client.get(f"{self.base_url}/assets/{gecko_id}")
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "data" in data and "priceUsd" in data["data"]:
+                            price = float(data["data"]["priceUsd"])
+                            logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinCap)")
+                            self.last_prices[symbol] = price
+                            return {"symbol": symbol, "price": price, "success": True}
                         else:
-                            # CoinGecko pour BTC et ETH
-                            response = await client.get(
-                                f"{self.base_url}/simple/price",
-                                params={"ids": gecko_id, "vs_currencies": "usd"},
-                                headers=self.headers
-                            )
-                            
-                            if response.status_code == 200:
-                                data = response.json()
-                                if gecko_id in data:
-                                    price = float(data[gecko_id]["usd"])
-                                    logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinGecko)")
-                                    return {"symbol": symbol, "price": price, "success": True}
-                            else:
-                                logger.warning(f"⚠️ Erreur {response.status_code} sur CoinGecko, tentative {attempt+1}/3")
-                                await asyncio.sleep(1)
-                                continue
-                                
-                except httpx.ConnectError:
-                    logger.warning(f"⚠️ Connexion impossible sur CoinGecko, tentative {attempt+1}/3")
-                    continue
-                    
-                except httpx.TimeoutException:
-                    logger.warning(f"⚠️ Timeout sur CoinGecko, tentative {attempt+1}/3")
-                    continue
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Erreur sur CoinGecko: {e}, tentative {attempt+1}/3")
-                    continue
+                            logger.warning(f"⚠️ Réponse CoinCap inattendue: {data}")
+                    else:
+                        logger.warning(f"⚠️ CoinCap erreur {response.status_code}: {response.text}")
             
-            # Si CoinGecko échoue, utiliser un fallback
-            logger.error(f"❌ CoinGecko inaccessible pour {symbol} après 3 tentatives")
-            
-            # Fallback: dernier prix connu
+            # Si CoinCap a échoué, utiliser le dernier prix connu
             if symbol in self.last_prices and self.last_prices[symbol] > 0:
                 logger.warning(f"⚠️ Utilisation du dernier prix connu: {symbol} = {self.last_prices[symbol]}")
                 return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
             
-            # Fallback: prix simulés
+            # Fallback
             mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
             price = mock_prices.get(symbol, 0)
             logger.warning(f"⚠️ Utilisation du prix simulé pour {symbol}: ${price}")
@@ -127,6 +106,8 @@ class BinanceService:
                 
         except Exception as e:
             logger.error(f"❌ Erreur {symbol}: {e}")
+            if symbol in self.last_prices and self.last_prices[symbol] > 0:
+                return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
             mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
             return {"symbol": symbol, "price": mock_prices.get(symbol, 0), "success": True}
     
@@ -148,25 +129,22 @@ class BinanceService:
         }
     
     async def get_24h_change(self, symbol: str) -> Dict:
-        """Obtenir la variation sur 24h depuis CoinGecko"""
+        """Obtenir la variation sur 24h depuis CoinCap"""
         try:
             if symbol in ["BTC", "ETH"]:
                 gecko_id = self.symbols.get(symbol)
                 if gecko_id:
                     async with httpx.AsyncClient(timeout=10.0, headers=self.headers) as client:
-                        response = await client.get(
-                            f"{self.base_url}/simple/price",
-                            params={"ids": gecko_id, "vs_currencies": "usd", "include_24hr_change": "true"},
-                            headers=self.headers
-                        )
+                        response = await client.get(f"{self.base_url}/assets/{gecko_id}")
                         
                         if response.status_code == 200:
                             data = response.json()
-                            if gecko_id in data:
+                            if "data" in data:
                                 return {
                                     "symbol": symbol,
-                                    "price": float(data[gecko_id]["usd"]),
-                                    "change_24h": float(data[gecko_id]["usd_24h_change"]),
+                                    "price": float(data["data"]["priceUsd"]),
+                                    "change_24h": float(data["data"]["changePercent24Hr"]),
+                                    "volume": float(data["data"]["volumeUsd24Hr"]),
                                     "success": True
                                 }
             elif symbol == "GOLD":
@@ -191,9 +169,9 @@ class BinanceService:
             return {"symbol": symbol, "success": False, "change_24h": 0}
     
     async def get_historical_klines(self, symbol: str, interval: str = "1d", limit: int = 30) -> List[Dict]:
-        """Obtenir les donnees historiques (simulées pour CoinGecko)"""
+        """Obtenir les donnees historiques (simulées pour CoinCap)"""
         try:
-            # CoinGecko n'a pas de données historiques gratuites sans API key
+            # CoinCap n'a pas de données historiques gratuites sans API key
             # On utilise une approximation basée sur le prix actuel
             current_price = await self.get_price(symbol)
             if current_price.get("success"):
