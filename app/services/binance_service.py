@@ -8,7 +8,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 class BinanceService:
-    """Service multi-API pour recuperer les prix (fallback automatique)"""
+    """Service multi-API avec variations 24h"""
     
     def __init__(self):
         self.last_prices = {}
@@ -25,24 +25,24 @@ class BinanceService:
         self.cache_time = {}
         self.cache_duration = 30  # secondes
     
-    async def _get_from_cache(self, symbol: str) -> Optional[float]:
+    async def _get_from_cache(self, symbol: str) -> Optional[Dict]:
         if symbol in self.cache and symbol in self.cache_time:
             if (datetime.now() - self.cache_time[symbol]).seconds < self.cache_duration:
                 return self.cache[symbol]
         return None
     
-    def _save_to_cache(self, symbol: str, price: float):
-        self.cache[symbol] = price
+    def _save_to_cache(self, symbol: str, data: Dict):
+        self.cache[symbol] = data
         self.cache_time[symbol] = datetime.now()
     
-    async def get_price(self, symbol: str) -> Dict:
-        """Obtenir le prix depuis plusieurs APIs avec fallback"""
+    async def get_price_with_details(self, symbol: str) -> Dict:
+        """Obtenir le prix ET la variation 24h"""
         try:
             # Vérifier le cache
-            cached_price = await self._get_from_cache(symbol)
-            if cached_price is not None:
-                logger.info(f"📊 {symbol}: ${cached_price:,.2f} (cache)")
-                return {"symbol": symbol, "price": cached_price, "success": True}
+            cached = await self._get_from_cache(symbol)
+            if cached is not None:
+                logger.info(f"📊 {symbol}: ${cached['price']:,.2f} (cache)")
+                return cached
             
             # Définir les APIs à essayer selon le symbole
             apis = self._get_apis_for_symbol(symbol)
@@ -53,12 +53,12 @@ class BinanceService:
                     async with httpx.AsyncClient(timeout=10.0) as client:
                         response = await client.get(url)
                         if response.status_code == 200:
-                            price = parser(response.json())
-                            if price and price > 0:
-                                logger.info(f"📊 {symbol}: ${price:,.2f} (via {api_name})")
-                                self._save_to_cache(symbol, price)
-                                self.last_prices[symbol] = price
-                                return {"symbol": symbol, "price": price, "success": True}
+                            result = parser(response.json())
+                            if result and result.get("price", 0) > 0:
+                                logger.info(f"📊 {symbol}: ${result['price']:,.2f} (via {api_name})")
+                                self._save_to_cache(symbol, result)
+                                self.last_prices[symbol] = result["price"]
+                                return result
                 except Exception as e:
                     logger.warning(f"⚠️ {api_name} échoué: {e}")
                     continue
@@ -66,36 +66,34 @@ class BinanceService:
             # Si tout échoue, utiliser le dernier prix connu
             if symbol in self.last_prices and self.last_prices[symbol] > 0:
                 logger.warning(f"⚠️ Utilisation du dernier prix connu: {symbol} = {self.last_prices[symbol]}")
-                return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
+                return {"price": self.last_prices[symbol], "change_24h": 0, "volume": 0}
             
             # Dernier fallback
             mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
-            price = mock_prices.get(symbol, 0)
-            logger.warning(f"⚠️ Utilisation du prix simulé pour {symbol}: ${price}")
-            return {"symbol": symbol, "price": price, "success": True}
+            return {"price": mock_prices.get(symbol, 0), "change_24h": 0, "volume": 0}
                 
         except Exception as e:
             logger.error(f"❌ Erreur {symbol}: {e}")
             if symbol in self.last_prices and self.last_prices[symbol] > 0:
-                return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
+                return {"price": self.last_prices[symbol], "change_24h": 0, "volume": 0}
             mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
-            return {"symbol": symbol, "price": mock_prices.get(symbol, 0), "success": True}
+            return {"price": mock_prices.get(symbol, 0), "change_24h": 0, "volume": 0}
     
     def _get_apis_for_symbol(self, symbol: str) -> list:
         """Retourner la liste des APIs à essayer pour un symbole"""
         if symbol == "BTC":
             return [
+                ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", self._parse_kraken_btc),
+                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko),
                 ("CoinCap", "https://api.coincap.io/v2/assets/bitcoin", self._parse_coincap),
-                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd", self._parse_coingecko),
-                ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", self._parse_kraken),
                 ("KuCoin", "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=BTC-USDT", self._parse_kucoin),
                 ("Coinbase", "https://api.coinbase.com/v2/prices/BTC-USD/buy", self._parse_coinbase)
             ]
         elif symbol == "ETH":
             return [
+                ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=ETHUSD", self._parse_kraken_eth),
+                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko),
                 ("CoinCap", "https://api.coincap.io/v2/assets/ethereum", self._parse_coincap),
-                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd", self._parse_coingecko),
-                ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=ETHUSD", self._parse_kraken),
                 ("KuCoin", "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=ETH-USDT", self._parse_kucoin),
                 ("Coinbase", "https://api.coinbase.com/v2/prices/ETH-USD/buy", self._parse_coinbase)
             ]
@@ -105,116 +103,110 @@ class BinanceService:
             ]
         return []
     
-    def _parse_coincap(self, data: dict) -> float:
+    def _parse_kraken_btc(self, data: dict) -> Dict:
         try:
-            return float(data["data"]["priceUsd"])
+            result = data["result"]["XXBTZUSD"]
+            return {
+                "price": float(result["c"][0]),
+                "change_24h": float(result["p"][1]),  # Prix moyen pondéré 24h
+                "volume": float(result["v"][0])
+            }
         except:
-            return 0
+            return {"price": 0, "change_24h": 0, "volume": 0}
     
-    def _parse_coingecko(self, data: dict) -> float:
+    def _parse_kraken_eth(self, data: dict) -> Dict:
+        try:
+            result = data["result"]["XETHZUSD"]
+            return {
+                "price": float(result["c"][0]),
+                "change_24h": float(result["p"][1]),
+                "volume": float(result["v"][0])
+            }
+        except:
+            return {"price": 0, "change_24h": 0, "volume": 0}
+    
+    def _parse_coingecko(self, data: dict) -> Dict:
         try:
             if "bitcoin" in data:
-                return float(data["bitcoin"]["usd"])
+                return {
+                    "price": float(data["bitcoin"]["usd"]),
+                    "change_24h": float(data["bitcoin"]["usd_24h_change"]),
+                    "volume": 0
+                }
             elif "ethereum" in data:
-                return float(data["ethereum"]["usd"])
-            return 0
-        except:
-            return 0
-    
-    def _parse_kraken(self, data: dict) -> float:
-        try:
-            if "result" in data:
-                if "XXBTZUSD" in data["result"]:
-                    return float(data["result"]["XXBTZUSD"]["c"][0])
-                elif "XETHZUSD" in data["result"]:
-                    return float(data["result"]["XETHZUSD"]["c"][0])
-            return 0
-        except:
-            return 0
-    
-    def _parse_kucoin(self, data: dict) -> float:
-        try:
-            return float(data["data"]["price"])
-        except:
-            return 0
-    
-    def _parse_coinbase(self, data: dict) -> float:
-        try:
-            return float(data["data"]["amount"])
-        except:
-            return 0
-    
-    def _parse_gold(self, data: dict) -> float:
-        try:
-            return float(data.get("price", 0))
-        except:
-            return 0
-    
-    async def get_price_with_details(self, symbol: str) -> Dict:
-        price_data = await self.get_price(symbol)
-        if not price_data.get("success") or price_data.get("price", 0) == 0:
+                return {
+                    "price": float(data["ethereum"]["usd"]),
+                    "change_24h": float(data["ethereum"]["usd_24h_change"]),
+                    "volume": 0
+                }
             return {"price": 0, "change_24h": 0, "volume": 0}
-        
-        self.last_prices[symbol] = price_data["price"]
-        data_24h = await self.get_24h_change(symbol)
-        
+        except:
+            return {"price": 0, "change_24h": 0, "volume": 0}
+    
+    def _parse_coincap(self, data: dict) -> Dict:
+        try:
+            return {
+                "price": float(data["data"]["priceUsd"]),
+                "change_24h": float(data["data"]["changePercent24Hr"]),
+                "volume": float(data["data"]["volumeUsd24Hr"])
+            }
+        except:
+            return {"price": 0, "change_24h": 0, "volume": 0}
+    
+    def _parse_kucoin(self, data: dict) -> Dict:
+        try:
+            return {
+                "price": float(data["data"]["price"]),
+                "change_24h": 0,
+                "volume": 0
+            }
+        except:
+            return {"price": 0, "change_24h": 0, "volume": 0}
+    
+    def _parse_coinbase(self, data: dict) -> Dict:
+        try:
+            return {
+                "price": float(data["data"]["amount"]),
+                "change_24h": 0,
+                "volume": 0
+            }
+        except:
+            return {"price": 0, "change_24h": 0, "volume": 0}
+    
+    def _parse_gold(self, data: dict) -> Dict:
+        try:
+            return {
+                "price": float(data.get("price", 0)),
+                "change_24h": float(data.get("change", 0)),
+                "volume": 0
+            }
+        except:
+            return {"price": 0, "change_24h": 0, "volume": 0}
+    
+    async def get_price(self, symbol: str) -> Dict:
+        """Obtenir le prix uniquement (pour compatibilité)"""
+        result = await self.get_price_with_details(symbol)
         return {
-            "price": price_data["price"],
-            "change_24h": data_24h.get("change_24h", 0) if data_24h.get("success") else 0,
-            "volume": data_24h.get("volume", 0) if data_24h.get("success") else 0
+            "symbol": symbol,
+            "price": result.get("price", 0),
+            "success": result.get("price", 0) > 0
         }
     
     async def get_24h_change(self, symbol: str) -> Dict:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                if symbol == "BTC":
-                    response = await client.get("https://api.coincap.io/v2/assets/bitcoin")
-                    if response.status_code == 200:
-                        data = response.json()
-                        return {
-                            "symbol": symbol,
-                            "price": float(data["data"]["priceUsd"]),
-                            "change_24h": float(data["data"]["changePercent24Hr"]),
-                            "volume": float(data["data"]["volumeUsd24Hr"]),
-                            "success": True
-                        }
-                
-                elif symbol == "ETH":
-                    response = await client.get("https://api.coincap.io/v2/assets/ethereum")
-                    if response.status_code == 200:
-                        data = response.json()
-                        return {
-                            "symbol": symbol,
-                            "price": float(data["data"]["priceUsd"]),
-                            "change_24h": float(data["data"]["changePercent24Hr"]),
-                            "volume": float(data["data"]["volumeUsd24Hr"]),
-                            "success": True
-                        }
-                
-                elif symbol == "GOLD":
-                    response = await client.get("https://api.gold-api.com/price/XAU")
-                    if response.status_code == 200:
-                        data = response.json()
-                        price = float(data.get("price", 0))
-                        if price > 0:
-                            return {
-                                "symbol": symbol,
-                                "price": price,
-                                "change_24h": float(data.get("change", 0)),
-                                "success": True
-                            }
-            
-            return {"symbol": symbol, "success": False, "change_24h": 0}
-            
-        except Exception as e:
-            logger.error(f"Error fetching 24h for {symbol}: {e}")
-            return {"symbol": symbol, "success": False, "change_24h": 0}
+        """Obtenir la variation sur 24h"""
+        result = await self.get_price_with_details(symbol)
+        return {
+            "symbol": symbol,
+            "price": result.get("price", 0),
+            "change_24h": result.get("change_24h", 0),
+            "success": result.get("price", 0) > 0
+        }
     
     async def get_historical_klines(self, symbol: str, interval: str = "1d", limit: int = 30) -> List[Dict]:
         try:
-            current_price = await self.get_price(symbol)
-            if current_price.get("success") and current_price.get("price", 0) > 0:
-                price = current_price["price"]
+            current = await self.get_price_with_details(symbol)
+            if current.get("price", 0) > 0:
+                price = current["price"]
                 historical = []
                 for i in range(limit - 1, -1, -1):
                     date = datetime.now() - timedelta(days=i)
@@ -288,8 +280,8 @@ class BinanceService:
         
         for symbol in ["BTC", "ETH", "GOLD"]:
             try:
-                current = await self.get_price(symbol)
-                if not current.get("success") or current.get("price", 0) == 0:
+                current = await self.get_price_with_details(symbol)
+                if current.get("price", 0) == 0:
                     continue
                 
                 current_price = current["price"]
@@ -345,8 +337,8 @@ class BinanceService:
         details = {}
         
         for symbol, quantity in holdings.items():
-            price_data = await self.get_price(symbol)
-            if price_data.get("success") and price_data.get("price", 0) > 0:
+            price_data = await self.get_price_with_details(symbol)
+            if price_data.get("price", 0) > 0:
                 value = price_data["price"] * quantity
                 total_value += value
                 details[symbol] = {
