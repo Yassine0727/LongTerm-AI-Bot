@@ -1,0 +1,23 @@
+{
+  "price_interval": 30,
+  "alert_threshold": 5,
+  "notifications": {
+    "price": true,
+    "news": true,
+    "weekly": true
+  },
+  "telegram_channels": [
+    {
+      "channel": "@CoingraphNews",
+      "active": true
+    },
+    {
+      "channel": "@cryptoast_fr",
+      "active": true
+    },
+    {
+      "channel": "@Crypto_News95",
+      "active": true
+    }
+  ]
+}
