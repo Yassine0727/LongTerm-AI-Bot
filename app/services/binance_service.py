@@ -68,7 +68,7 @@ class BinanceService:
                         return {"symbol": symbol, "price": price, "success": True}
                 
                 elif symbol == "GOLD":
-                    # Essayer Gold-API d'abord
+                    # Utiliser Gold-API pour l'or
                     response = await client.get("https://api.gold-api.com/price/XAU")
                     if response.status_code == 200:
                         data = response.json()
@@ -79,7 +79,23 @@ class BinanceService:
                             self.last_prices[symbol] = price
                             return {"symbol": symbol, "price": price, "success": True}
                     
-                    # Fallback: prix approximatif
+                    # Fallback: si Gold-API échoue, essayer Binance XAUUSDT
+                    try:
+                        response = await client.get(
+                            "https://api.binance.com/api/v3/ticker/price",
+                            params={"symbol": "XAUTUSDT"}
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            price = float(data["price"])
+                            logger.info(f"📊 {symbol}: ${price:,.2f} (via Binance XAUUSDT)")
+                            self._save_to_cache(symbol, price)
+                            self.last_prices[symbol] = price
+                            return {"symbol": symbol, "price": price, "success": True}
+                    except Exception as e:
+                        logger.warning(f"⚠️ Binance XAUUSDT échoué: {e}")
+                    
+                    # Dernier fallback: prix approximatif
                     fallback_price = 2400.00
                     logger.warning(f"⚠️ Utilisation du prix fallback pour l'or: ${fallback_price}")
                     return {"symbol": symbol, "price": fallback_price, "success": True}
@@ -145,6 +161,7 @@ class BinanceService:
                         }
                 
                 elif symbol == "GOLD":
+                    # Essayer Gold-API d'abord
                     response = await client.get("https://api.gold-api.com/price/XAU")
                     if response.status_code == 200:
                         data = response.json()
@@ -156,6 +173,25 @@ class BinanceService:
                                 "change_24h": float(data.get("change", 0)),
                                 "success": True
                             }
+                    
+                    # Fallback: Binance XAUUSDT
+                    try:
+                        response = await client.get(
+                            "https://api.binance.com/api/v3/ticker/24hr",
+                            params={"symbol": "XAUTUSDT"}
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            return {
+                                "symbol": symbol,
+                                "price": float(data["lastPrice"]),
+                                "change_24h": float(data["priceChangePercent"]),
+                                "success": True
+                            }
+                    except Exception as e:
+                        logger.warning(f"⚠️ Binance 24h XAUUSDT échoué: {e}")
+                    
+                    return {"symbol": symbol, "success": False, "change_24h": 0}
             
             return {"symbol": symbol, "success": False, "change_24h": 0}
             
@@ -164,7 +200,7 @@ class BinanceService:
             return {"symbol": symbol, "success": False, "change_24h": 0}
     
     async def get_historical_klines(self, symbol: str, interval: str = "1d", limit: int = 30) -> List[Dict]:
-        """Obtenir les données historiques (simulées pour CoinCap)"""
+        """Obtenir les données historiques (simulées)"""
         try:
             current_price = await self.get_price(symbol)
             if current_price.get("success"):
