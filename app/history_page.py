@@ -1,6 +1,9 @@
-from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, Header
+from fastapi.responses import HTMLResponse, JSONResponse
+import base64
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 HISTORY_HTML = '''
@@ -54,13 +57,15 @@ HISTORY_HTML = '''
         .summary-item { text-align:center; padding:10px; background:#0a0a0a; border-radius:8px; border:1px solid #222; }
         .summary-item .label { color:#666; font-size:11px; }
         .summary-item .value { font-size:18px; font-weight:bold; margin-top:4px; }
+        .error-msg { color:#f87171; text-align:center; padding:30px; font-size:16px; }
+        .loading-msg { color:#444; text-align:center; padding:30px; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>Price History</h1>
-        <a href="/web" class="back-btn">Back to Dashboard</a>
+        <h1>📊 Price History</h1>
+        <a href="/web" class="back-btn">← Back to Dashboard</a>
     </div>
 
     <div class="card">
@@ -79,7 +84,7 @@ HISTORY_HTML = '''
                 <option value="180">180 days</option>
                 <option value="365">1 year</option>
             </select>
-            <button onclick="loadHistoryPage()">Refresh</button>
+            <button onclick="loadHistoryPage()">🔄 Refresh</button>
         </div>
     </div>
 
@@ -113,7 +118,7 @@ HISTORY_HTML = '''
     <div class="card">
         <div class="card-title">Data Table</div>
         <div class="table-container" id="tableContainer">
-            <div style="color:#444;text-align:center;padding:30px;">Loading...</div>
+            <div class="loading-msg">⏳ Loading...</div>
         </div>
     </div>
 </div>
@@ -121,31 +126,42 @@ HISTORY_HTML = '''
 <script>
 var priceChart = null;
 
+// ===== AUTHENTIFICATION =====
+const AUTH = btoa('admin:admin123');
+
 async function callAPI(endpoint) {
     try {
         var response = await fetch(endpoint, {
-            headers: { 'password': 'admin123' }
+            headers: {
+                'Authorization': 'Basic ' + AUTH
+            }
         });
+        if (response.status === 401) {
+            throw new Error('Unauthorized - Veuillez vous reconnecter');
+        }
         if (!response.ok) return null;
         return await response.json();
-    } catch(e) { return null; }
+    } catch(e) {
+        console.error('API Error:', e);
+        return null;
+    }
 }
 
 async function loadHistoryPage() {
     var asset = document.getElementById('histAsset').value;
     var period = parseInt(document.getElementById('histPeriod').value);
     
-    document.getElementById('tableContainer').innerHTML = '<div style="color:#444;text-align:center;padding:30px;">Loading...</div>';
+    document.getElementById('tableContainer').innerHTML = '<div class="loading-msg">⏳ Loading...</div>';
     
     var data = await callAPI('/api/price-history');
     if (!data || !data.success) {
-        document.getElementById('tableContainer').innerHTML = '<div style="color:#f87171;text-align:center;padding:30px;">Error</div>';
+        document.getElementById('tableContainer').innerHTML = '<div class="error-msg">❌ Error loading data. Please try again.</div>';
         return;
     }
     
     var history = data.history || [];
     if (history.length === 0) {
-        document.getElementById('tableContainer').innerHTML = '<div style="color:#444;text-align:center;padding:30px;">No records yet.</div>';
+        document.getElementById('tableContainer').innerHTML = '<div class="error-msg">📭 No records yet. Prices will be saved every 6 hours.</div>';
         return;
     }
     
@@ -160,8 +176,8 @@ async function loadHistoryPage() {
             var price = r.prices && r.prices[asset] ? r.prices[asset].price : null;
             if (price > 0) {
                 records.push({
-                    date: r.date,
-                    time: r.time,
+                    date: r.date || new Date(r.timestamp).toLocaleDateString(),
+                    time: r.time || new Date(r.timestamp).toLocaleTimeString(),
                     timestamp: r.timestamp,
                     price: price,
                     change: r.prices[asset].change_24h || 0,
@@ -174,7 +190,7 @@ async function loadHistoryPage() {
     records.reverse();
     
     if (records.length === 0) {
-        document.getElementById('tableContainer').innerHTML = '<div style="color:#444;text-align:center;padding:30px;">No data for this period</div>';
+        document.getElementById('tableContainer').innerHTML = '<div class="error-msg">📭 No data for this period</div>';
         return;
     }
     
@@ -212,6 +228,7 @@ async function loadHistoryPage() {
     html += '</tbody></table>';
     document.getElementById('tableContainer').innerHTML = html;
     
+    // Chart
     var ctx = document.getElementById('priceChart').getContext('2d');
     var labels = records.map(function(r) {
         var d = new Date(r.timestamp);
@@ -275,6 +292,7 @@ async function loadHistoryPage() {
     });
 }
 
+// Charger au démarrage
 loadHistoryPage();
 </script>
 </body>
@@ -282,5 +300,55 @@ loadHistoryPage();
 '''
 
 @router.get("/history")
-async def history_page():
+async def history_page(request: Request):
+    """Page d'historique avec authentification"""
+    # Vérifier l'authentification
+    auth_header = request.headers.get("authorization")
+    if not auth_header:
+        return HTMLResponse("""
+        <html>
+        <head><title>Authentification requise</title></head>
+        <body style="background:#0a0a0a;color:#e5e5e5;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
+            <div style="text-align:center;">
+                <h1 style="color:#f7931a;">🔒 Authentification requise</h1>
+                <p style="color:#666;">Veuillez vous connecter d'abord</p>
+                <a href="/" style="color:#60a5fa;text-decoration:none;padding:10px 20px;background:#1e3a5f;border-radius:8px;display:inline-block;margin-top:20px;">→ Retour au Dashboard</a>
+            </div>
+        </body>
+        </html>
+        """, status_code=401)
+    
+    # Vérifier les identifiants
+    try:
+        auth = auth_header.split(" ")[1]
+        decoded = base64.b64decode(auth).decode("utf-8")
+        username, password = decoded.split(":")
+        if username != "admin" or password != "admin123":
+            return HTMLResponse("""
+            <html>
+            <head><title>Accès refusé</title></head>
+            <body style="background:#0a0a0a;color:#e5e5e5;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
+                <div style="text-align:center;">
+                    <h1 style="color:#f87171;">⛔ Accès refusé</h1>
+                    <p style="color:#666;">Identifiants incorrects</p>
+                    <a href="/" style="color:#60a5fa;text-decoration:none;padding:10px 20px;background:#1e3a5f;border-radius:8px;display:inline-block;margin-top:20px;">→ Retour au Dashboard</a>
+                </div>
+            </body>
+            </html>
+            """, status_code=401)
+    except:
+        return HTMLResponse("""
+        <html>
+        <head><title>Erreur</title></head>
+        <body style="background:#0a0a0a;color:#e5e5e5;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
+            <div style="text-align:center;">
+                <h1 style="color:#f87171;">❌ Erreur d'authentification</h1>
+                <p style="color:#666;">Format d'authentification invalide</p>
+                <a href="/" style="color:#60a5fa;text-decoration:none;padding:10px 20px;background:#1e3a5f;border-radius:8px;display:inline-block;margin-top:20px;">→ Retour au Dashboard</a>
+            </div>
+        </body>
+        </html>
+        """, status_code=401)
+    
+    # Si authentifié, afficher la page
     return HTMLResponse(HISTORY_HTML)
