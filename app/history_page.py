@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Request, Header
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
 import base64
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# ===== PAGE HISTORY =====
 HISTORY_HTML = '''
 <!DOCTYPE html>
 <html>
@@ -59,13 +60,18 @@ HISTORY_HTML = '''
         .summary-item .value { font-size:18px; font-weight:bold; margin-top:4px; }
         .error-msg { color:#f87171; text-align:center; padding:30px; font-size:16px; }
         .loading-msg { color:#444; text-align:center; padding:30px; }
+        .auth-error { text-align:center; padding:50px; }
+        .auth-error h1 { color:#f7931a; margin-bottom:20px; }
+        .auth-error p { color:#666; margin-bottom:20px; }
+        .auth-error a { color:#60a5fa; text-decoration:none; padding:10px 20px; background:#1e3a5f; border-radius:8px; display:inline-block; }
+        .auth-error a:hover { background:#1e40af; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
         <h1>📊 Price History</h1>
-        <a href="/web" class="back-btn">← Back to Dashboard</a>
+        <a href="/" class="back-btn">← Back to Dashboard</a>
     </div>
 
     <div class="card">
@@ -127,7 +133,20 @@ HISTORY_HTML = '''
 var priceChart = null;
 
 // ===== AUTHENTIFICATION =====
-const AUTH = btoa('admin:admin123');
+function getAuth() {
+    // Essayer de récupérer depuis le cookie
+    var cookies = document.cookie.split(';');
+    for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.startsWith('auth=')) {
+            return cookie.substring(5);
+        }
+    }
+    // Fallback : identifiants par défaut
+    return btoa('admin:admin123');
+}
+
+const AUTH = getAuth();
 
 async function callAPI(endpoint) {
     try {
@@ -137,7 +156,14 @@ async function callAPI(endpoint) {
             }
         });
         if (response.status === 401) {
-            throw new Error('Unauthorized - Veuillez vous reconnecter');
+            document.getElementById('tableContainer').innerHTML = `
+                <div class="auth-error">
+                    <h1>🔒 Session expirée</h1>
+                    <p>Veuillez vous reconnecter</p>
+                    <a href="/">→ Retour au Dashboard</a>
+                </div>
+            `;
+            return null;
         }
         if (!response.ok) return null;
         return await response.json();
@@ -302,53 +328,62 @@ loadHistoryPage();
 @router.get("/history")
 async def history_page(request: Request):
     """Page d'historique avec authentification"""
-    # Vérifier l'authentification
+    # Vérifier le cookie d'authentification
+    auth_cookie = request.cookies.get("auth")
+    if auth_cookie:
+        try:
+            decoded = base64.b64decode(auth_cookie).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == "admin" and password == "admin123":
+                return HTMLResponse(HISTORY_HTML)
+        except:
+            pass
+    
+    # Vérifier le header d'authentification
     auth_header = request.headers.get("authorization")
-    if not auth_header:
-        return HTMLResponse("""
-        <html>
-        <head><title>Authentification requise</title></head>
-        <body style="background:#0a0a0a;color:#e5e5e5;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
-            <div style="text-align:center;">
-                <h1 style="color:#f7931a;">🔒 Authentification requise</h1>
-                <p style="color:#666;">Veuillez vous connecter d'abord</p>
-                <a href="/" style="color:#60a5fa;text-decoration:none;padding:10px 20px;background:#1e3a5f;border-radius:8px;display:inline-block;margin-top:20px;">→ Retour au Dashboard</a>
-            </div>
-        </body>
-        </html>
-        """, status_code=401)
+    if auth_header:
+        try:
+            auth = auth_header.split(" ")[1]
+            decoded = base64.b64decode(auth).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == "admin" and password == "admin123":
+                return HTMLResponse(HISTORY_HTML)
+        except:
+            pass
     
-    # Vérifier les identifiants
-    try:
-        auth = auth_header.split(" ")[1]
-        decoded = base64.b64decode(auth).decode("utf-8")
-        username, password = decoded.split(":")
-        if username != "admin" or password != "admin123":
-            return HTMLResponse("""
-            <html>
-            <head><title>Accès refusé</title></head>
-            <body style="background:#0a0a0a;color:#e5e5e5;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
-                <div style="text-align:center;">
-                    <h1 style="color:#f87171;">⛔ Accès refusé</h1>
-                    <p style="color:#666;">Identifiants incorrects</p>
-                    <a href="/" style="color:#60a5fa;text-decoration:none;padding:10px 20px;background:#1e3a5f;border-radius:8px;display:inline-block;margin-top:20px;">→ Retour au Dashboard</a>
-                </div>
-            </body>
-            </html>
-            """, status_code=401)
-    except:
-        return HTMLResponse("""
-        <html>
-        <head><title>Erreur</title></head>
-        <body style="background:#0a0a0a;color:#e5e5e5;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
-            <div style="text-align:center;">
-                <h1 style="color:#f87171;">❌ Erreur d'authentification</h1>
-                <p style="color:#666;">Format d'authentification invalide</p>
-                <a href="/" style="color:#60a5fa;text-decoration:none;padding:10px 20px;background:#1e3a5f;border-radius:8px;display:inline-block;margin-top:20px;">→ Retour au Dashboard</a>
-            </div>
-        </body>
-        </html>
-        """, status_code=401)
+    # Vérifier le paramètre URL
+    auth_param = request.query_params.get("auth")
+    if auth_param:
+        try:
+            decoded = base64.b64decode(auth_param).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == "admin" and password == "admin123":
+                response = HTMLResponse(HISTORY_HTML)
+                response.set_cookie(key="auth", value=auth_param, max_age=86400, path="/")
+                return response
+        except:
+            pass
     
-    # Si authentifié, afficher la page
-    return HTMLResponse(HISTORY_HTML)
+    # Si non authentifié, afficher un message
+    return HTMLResponse("""
+    <html>
+    <head>
+        <title>Authentification requise</title>
+        <style>
+            body { background:#0a0a0a; color:#e5e5e5; font-family:Arial; display:flex; justify-content:center; align-items:center; height:100vh; margin:0; }
+            .container { text-align:center; }
+            h1 { color:#f7931a; margin-bottom:20px; }
+            p { color:#666; margin-bottom:20px; }
+            .btn { color:#60a5fa; text-decoration:none; padding:10px 20px; background:#1e3a5f; border-radius:8px; display:inline-block; }
+            .btn:hover { background:#1e40af; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔒 Authentification requise</h1>
+            <p>Veuillez vous connecter d'abord</p>
+            <a href="/" class="btn">→ Retour au Dashboard</a>
+        </div>
+    </body>
+    </html>
+    """, status_code=401)
