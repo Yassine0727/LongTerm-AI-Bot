@@ -22,7 +22,7 @@ app = FastAPI(title="LongTerm AI Bot", version="3.0")
 # ===== CORS CONFIGURATION SÉCURISÉE =====
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],  # Limiter les origines
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
@@ -43,17 +43,15 @@ security = HTTPBasic()
 # ===== CHANGEZ CES IDENTIFIANTS ! =====
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
-SECRET_KEY = "votre_cle_secrete_tres_longue_et_aleatoire"  # À changer !
+SECRET_KEY = "votre_cle_secrete_tres_longue_et_aleatoire"
 
 # ===== MIDDLEWARE DE SÉCURITÉ POUR LES API =====
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Middleware pour protéger toutes les routes API"""
-    # Ignorer les routes qui ne commencent pas par /api/
     if not request.url.path.startswith("/api/"):
         return await call_next(request)
     
-    # Vérifier l'authentification
     auth_header = request.headers.get("authorization")
     if not auth_header:
         return JSONResponse(
@@ -80,7 +78,6 @@ async def auth_middleware(request: Request, call_next):
         )
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
-    """Vérifier les identifiants"""
     correct_username = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
     correct_password = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
     
@@ -93,7 +90,6 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     return credentials
 
 def check_auth_header(request: Request):
-    """Vérifier l'authentification via header"""
     auth_header = request.headers.get("authorization")
     if not auth_header:
         return False
@@ -217,7 +213,7 @@ LOGIN_PAGE = '''
 </html>
 '''
 
-# ===== PAGE PRINCIPALE (avec callAPI modifiée) =====
+# ===== PAGE PRINCIPALE (24h/7j sans START/STOP) =====
 MAIN_PAGE = '''
 <!DOCTYPE html>
 <html lang="fr">
@@ -271,16 +267,9 @@ MAIN_PAGE = '''
             border-radius: 20px;
             font-weight: bold;
             font-size: 14px;
-        }
-        .status-badge.running {
             background: #064e3b;
             color: #34d399;
             border: 1px solid #34d399;
-        }
-        .status-badge.stopped {
-            background: #4a1a1a;
-            color: #f87171;
-            border: 1px solid #f87171;
         }
         .status-dot {
             display: inline-block;
@@ -288,13 +277,8 @@ MAIN_PAGE = '''
             height: 10px;
             border-radius: 50%;
             margin-right: 8px;
-        }
-        .status-dot.on {
             background: #34d399;
             animation: pulse 2s infinite;
-        }
-        .status-dot.off {
-            background: #f87171;
         }
         @keyframes pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
@@ -351,16 +335,14 @@ MAIN_PAGE = '''
             transition: all 0.3s;
         }
         .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-primary { background: #065f46; color: #34d399; }
-        .btn-primary:hover:not(:disabled) { background: #047857; transform: scale(1.02); }
-        .btn-danger { background: #7f1d1d; color: #f87171; }
-        .btn-danger:hover:not(:disabled) { background: #991b1b; transform: scale(1.02); }
         .btn-info { background: #1e3a5f; color: #60a5fa; }
         .btn-info:hover:not(:disabled) { background: #1e40af; transform: scale(1.02); }
         .btn-success { background: #065f46; color: #34d399; }
         .btn-success:hover:not(:disabled) { background: #047857; transform: scale(1.02); }
         .btn-warning { background: #7c5a1a; color: #fbbf24; }
         .btn-warning:hover:not(:disabled) { background: #9a6d1a; transform: scale(1.02); }
+        .btn-danger { background: #7f1d1d; color: #f87171; }
+        .btn-danger:hover:not(:disabled) { background: #991b1b; transform: scale(1.02); }
         .btn-group { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
         .config-row { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
         .config-row input, .config-row select {
@@ -454,6 +436,27 @@ MAIN_PAGE = '''
             border-color: #f7931a;
             color: #f7931a;
         }
+        .reload-btn {
+            background: #1a3a1a;
+            border: 1px solid #34d399;
+            color: #34d399;
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .reload-btn:hover {
+            background: #064e3b;
+            transform: scale(1.02);
+        }
+        .reload-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .logout-btn {
             background: #4a1a1a;
             border: 1px solid #f87171;
@@ -471,6 +474,11 @@ MAIN_PAGE = '''
             background: #7f1d1d;
             transform: scale(1.02);
         }
+        .bot-status-text {
+            color: #34d399;
+            font-size: 14px;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -481,11 +489,14 @@ MAIN_PAGE = '''
             <span>Ultimate Investment Bot v3.0</span>
         </div>
         <div class="header-status">
-            <span id="systemStatus" class="status-badge stopped">
-                <span class="status-dot off"></span>
-                <span id="statusText">STOPPED</span>
+            <span class="status-badge">
+                <span class="status-dot"></span>
+                <span id="statusText">ONLINE 24/7</span>
             </span>
             <span style="color:#666;font-size:13px;" id="lastUpdate">Last update: -</span>
+            <button class="reload-btn" onclick="reloadBot()" id="btnReload">
+                🔄 Recharger
+            </button>
             <button class="settings-btn" onclick="window.location.href='/settings'">
                 ⚙️ Paramètres
             </button>
@@ -536,13 +547,11 @@ MAIN_PAGE = '''
         <div class="card">
             <div class="card-title">Bot Control</div>
             <div class="btn-group">
-                <button id="btnStart" class="btn btn-primary">START</button>
-                <button id="btnStop" class="btn btn-danger" disabled>STOP</button>
-                <button id="btnCheckPrices" class="btn btn-info">Check Prices</button>
-                <button id="btnWeeklyReport" class="btn btn-warning">Weekly Report</button>
-                <button id="btnPriceHistory" class="btn btn-info" onclick="window.location.href='/history'">History</button>
+                <button id="btnCheckPrices" class="btn btn-info">🔄 Check Prices</button>
+                <button id="btnWeeklyReport" class="btn btn-warning">📊 Weekly Report</button>
+                <button id="btnPriceHistory" class="btn btn-info" onclick="window.location.href='/history'">📈 History</button>
             </div>
-            <div style="margin-top:10px;font-size:13px;color:#666;" id="botStatusInfo">Bot stopped</div>
+            <div style="margin-top:10px;font-size:13px;color:#34d399;" id="botStatusInfo">🟢 Bot is running 24/7</div>
         </div>
         <div class="card">
             <div class="card-title">Statistics</div>
@@ -672,7 +681,7 @@ function clearLogs() {
 }
 
 // ============================================
-// API CALLS AVEC AUTHENTIFICATION BASIC
+// API CALLS
 // ============================================
 async function callAPI(endpoint, method, data) {
     method = method || 'GET';
@@ -695,19 +704,37 @@ async function callAPI(endpoint, method, data) {
                 window.location.href = '/login';
                 return null;
             }
-            if (response.status === 0 || response.status === 500) {
-                return null;
-            }
             return null;
         }
         return await response.json();
     } catch (error) {
-        if (error.message.includes('ERR_CONNECTION_REFUSED') || 
-            error.message.includes('Failed to fetch')) {
-            return null;
-        }
         addLog('API Error: ' + error.message, 'error');
         return null;
+    }
+}
+
+// ============================================
+// RELOAD BOT
+// ============================================
+async function reloadBot() {
+    var btn = document.getElementById('btnReload');
+    btn.disabled = true;
+    btn.textContent = '⏳ Rechargement...';
+    addLog('🔄 Rechargement du bot...', 'info');
+    
+    var data = await callAPI('/api/reload', 'POST');
+    
+    btn.disabled = false;
+    btn.textContent = '🔄 Recharger';
+    
+    if (data && data.success) {
+        addLog('✅ Bot rechargé avec succès', 'success');
+        updateStatus();
+        loadAnalyses();
+        loadPortfolio();
+        updatePrices();
+    } else {
+        addLog('❌ Erreur lors du rechargement', 'error');
     }
 }
 
@@ -717,40 +744,10 @@ async function callAPI(endpoint, method, data) {
 async function updateStatus() {
     var data = await callAPI('/api/status');
     if (!data) {
-        var badge = document.getElementById('systemStatus');
-        var text = document.getElementById('statusText');
-        if (badge) {
-            badge.className = 'status-badge stopped';
-            text.textContent = 'OFFLINE';
-        }
         return;
     }
     
-    var badge = document.getElementById('systemStatus');
-    var dot = badge.querySelector('.status-dot');
-    var text = document.getElementById('statusText');
-    var info = document.getElementById('botStatusInfo');
-    var start = document.getElementById('btnStart');
-    var stop = document.getElementById('btnStop');
-    var update = document.getElementById('lastUpdate');
-    
-    if (data.running) {
-        badge.className = 'status-badge running';
-        dot.className = 'status-dot on';
-        text.textContent = 'RUNNING';
-        start.disabled = true;
-        stop.disabled = false;
-        info.textContent = 'Bot is running';
-    } else {
-        badge.className = 'status-badge stopped';
-        dot.className = 'status-dot off';
-        text.textContent = 'STOPPED';
-        start.disabled = false;
-        stop.disabled = true;
-        info.textContent = 'Bot stopped';
-    }
-    
-    update.textContent = 'Last update: ' + new Date().toLocaleTimeString();
+    document.getElementById('lastUpdate').textContent = 'Last update: ' + new Date().toLocaleTimeString();
     
     if (data.stats) {
         document.getElementById('statsAnalyses').textContent = data.stats.total_analyzed || 0;
@@ -764,7 +761,7 @@ async function updatePrices() {
     addLog('Updating prices...', 'info');
     var data = await callAPI('/api/prices');
     if (!data) {
-        addLog('Unable to fetch prices - server offline', 'warning');
+        addLog('Unable to fetch prices', 'warning');
         return;
     }
     
@@ -837,24 +834,6 @@ async function loadAnalyses() {
 // ============================================
 // CONTROLS
 // ============================================
-async function startBot() {
-    addLog('Starting bot...', 'info');
-    var data = await callAPI('/api/start', 'POST');
-    if (data) {
-        addLog('Bot started', 'success');
-        updateStatus();
-    }
-}
-
-async function stopBot() {
-    addLog('Stopping bot...', 'info');
-    var data = await callAPI('/api/stop', 'POST');
-    if (data) {
-        addLog('Bot stopped', 'success');
-        updateStatus();
-    }
-}
-
 async function checkPrices() {
     addLog('Checking prices...', 'info');
     var data = await callAPI('/api/check-prices', 'POST');
@@ -1071,32 +1050,31 @@ async function viewPortfolioReport() {
 // ============================================
 // EVENTS
 // ============================================
-document.getElementById('btnStart').addEventListener('click', startBot);
-document.getElementById('btnStop').addEventListener('click', stopBot);
 document.getElementById('btnCheckPrices').addEventListener('click', checkPrices);
 document.getElementById('btnWeeklyReport').addEventListener('click', weeklyReport);
 
 // ============================================
 // INIT
 // ============================================
-addLog('Initializing bot...', 'info');
+addLog('🤖 Bot 24h/7j - Initialisation...', 'info');
 updateStatus();
 updatePrices();
 loadAnalyses();
 loadPortfolio();
 
+// Mises à jour automatiques
 setInterval(updateStatus, 5000);
 setInterval(updatePrices, 30000);
 setInterval(loadAnalyses, 10000);
 setInterval(loadPortfolio, 60000);
 
-addLog('Bot ready - Monitoring active', 'success');
+addLog('✅ Bot 24h/7j actif - Monitoring permanent', 'success');
 </script>
 </body>
 </html>
 '''
 
-# ===== PAGE PARAMÈTRES AVEC GESTION DES CHAÎNES TELEGRAM =====
+# ===== PAGE PARAMÈTRES =====
 SETTINGS_PAGE = '''
 <!DOCTYPE html>
 <html lang="fr">
@@ -1473,9 +1451,6 @@ SETTINGS_PAGE = '''
 </div>
 
 <script>
-// ============================================
-// LOGOUT
-// ============================================
 function logout() {
     if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
         document.cookie = 'auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
@@ -1483,9 +1458,6 @@ function logout() {
     }
 }
 
-// ============================================
-// LOGS
-// ============================================
 function addLog(msg, type) {
     var log = document.getElementById('settingsLogs');
     var entry = document.createElement('div');
@@ -1502,9 +1474,6 @@ function addLog(msg, type) {
     if (log.children.length > 50) log.removeChild(log.firstChild);
 }
 
-// ============================================
-// API CALLS AVEC AUTHENTIFICATION BASIC
-// ============================================
 async function callAPI(endpoint, method, data) {
     method = method || 'GET';
     try {
@@ -1537,7 +1506,6 @@ async function callAPI(endpoint, method, data) {
 function showResult(elementId, message, type) {
     var el = document.getElementById(elementId);
     if (!el) return;
-    
     var colors = {
         success: '#34d399',
         error: '#f87171',
@@ -1549,9 +1517,7 @@ function showResult(elementId, message, type) {
     addLog(message, type);
 }
 
-// ============================================
-// CHAÎNES TELEGRAM
-// ============================================
+// ===== CHAÎNES TELEGRAM =====
 async function loadChannels() {
     var data = await callAPI('/api/settings/channels');
     var list = document.getElementById('channelsList');
@@ -1642,9 +1608,7 @@ async function toggleChannel(index) {
     }
 }
 
-// ============================================
-// PARAMÈTRES - INTERVALLE
-// ============================================
+// ===== PARAMÈTRES =====
 async function savePriceInterval() {
     var btn = document.getElementById('btnInterval');
     var minutes = parseInt(document.getElementById('priceInterval').value);
@@ -1669,9 +1633,6 @@ async function savePriceInterval() {
     }
 }
 
-// ============================================
-// PARAMÈTRES - SEUIL
-// ============================================
 async function saveAlertThreshold() {
     var btn = document.getElementById('btnThreshold');
     var threshold = parseFloat(document.getElementById('alertThreshold').value);
@@ -1696,9 +1657,6 @@ async function saveAlertThreshold() {
     }
 }
 
-// ============================================
-// PARAMÈTRES - NOTIFICATIONS
-// ============================================
 async function saveNotifications() {
     var btn = document.getElementById('btnNotif');
     var settings = {
@@ -1722,9 +1680,7 @@ async function saveNotifications() {
     }
 }
 
-// ============================================
-// EXPORT
-// ============================================
+// ===== EXPORT =====
 async function exportData() {
     var btn = document.getElementById('btnExport');
     btn.disabled = true;
@@ -1757,9 +1713,7 @@ async function exportData() {
     }
 }
 
-// ============================================
-// RESET
-// ============================================
+// ===== RESET =====
 async function resetBot() {
     if (!confirm('⚠️ Voulez-vous vraiment réinitialiser le bot ? Toutes les données seront effacées.')) {
         return;
@@ -1843,20 +1797,16 @@ setTimeout(testServer, 1000);
 
 @app.get("/login")
 async def login_page():
-    """Page de connexion"""
     return HTMLResponse(LOGIN_PAGE)
 
 @app.get("/web")
 async def web_interface(request: Request):
-    """Interface web avec authentification"""
     if not check_auth_header(request):
         return RedirectResponse(url="/login", status_code=302)
     return HTMLResponse(MAIN_PAGE)
 
 @app.get("/")
 async def home(request: Request):
-    """Page d'accueil avec authentification"""
-    # Vérifier si le paramètre auth est présent dans l'URL
     auth_param = request.query_params.get("auth")
     if auth_param:
         try:
@@ -1869,7 +1819,6 @@ async def home(request: Request):
         except:
             pass
     
-    # Vérifier le cookie d'authentification
     auth_cookie = request.cookies.get("auth")
     if auth_cookie:
         try:
@@ -1880,7 +1829,6 @@ async def home(request: Request):
         except:
             pass
     
-    # Vérifier le header d'authentification
     if check_auth_header(request):
         return HTMLResponse(MAIN_PAGE)
     
@@ -1888,7 +1836,6 @@ async def home(request: Request):
 
 @app.get("/settings")
 async def settings_page(request: Request):
-    """Page paramètres avec authentification"""
     auth_cookie = request.cookies.get("auth")
     if auth_cookie:
         try:
@@ -1906,21 +1853,22 @@ async def settings_page(request: Request):
 
 @app.get("/history")
 async def history_page(request: Request):
-    """Page historique avec authentification"""
     if not check_auth_header(request):
         return RedirectResponse(url="/login", status_code=302)
     return RedirectResponse(url="/history", status_code=302)
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("LongTerm AI Bot v3.0 - ULTIMATE")
+    print("LongTerm AI Bot v3.0 - 24h/7j")
     print("=" * 50)
     print("Interface: http://localhost:8000/")
     print("Paramètres: http://localhost:8000/settings")
     print("API: http://localhost:8000/api/status")
     print("=" * 50)
     print("🔐 Identifiants par défaut:")
-    print("   Utilisateur: yagoniyassine")
-    print("   Mot de passe: yassineYagoni1919yassine$")
+    print("   Utilisateur: admin")
+    print("   Mot de passe: admin123")
+    print("=" * 50)
+    print("🤖 Bot 24h/7j actif en permanence")
     print("=" * 50)
     uvicorn.run(app, host="127.0.0.1", port=8000)
