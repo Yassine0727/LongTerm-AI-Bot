@@ -1,115 +1,103 @@
-import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-import json
-import os
-import random
-import time
-
 import httpx
-from decimal import Decimal
-
-from app.core.config import config
+from typing import Dict, Optional, List
+from datetime import datetime, timedelta
+import random
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 class BinanceService:
-    """Service pour recuperer les prix et donnees depuis CoinCap (alternative à Binance)"""
+    """Service pour recuperer les prix depuis CoinCap (BTC/ETH) et Gold-API (OR)"""
     
     def __init__(self):
-        # CoinCap API endpoint
-        self.base_url = "https://api.coincap.io/v2"
-        self.symbols = {
-            "BTC": "bitcoin",
-            "ETH": "ethereum",
-            "GOLD": "gold"  # CoinCap ne supporte pas l'or directement
-        }
-        
         self.last_prices = {}
         self.price_history = {}
         self.alert_thresholds = {
-            "BTC": float(getattr(config, 'ALERT_BTC_THRESHOLD', 2.0)),
-            "ETH": float(getattr(config, 'ALERT_ETH_THRESHOLD', 3.0)),
-            "GOLD": float(getattr(config, 'ALERT_GOLD_THRESHOLD', 1.5))
+            "BTC": 2.0,
+            "ETH": 3.0,
+            "GOLD": 1.5
         }
         self.weekly_data = {}
-        self.current_url_index = 0
         
-        # Headers pour imiter un navigateur
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Connection": "keep-alive"
-        }
+        # Cache pour éviter trop de requêtes
+        self.cache = {}
+        self.cache_time = {}
+        self.cache_duration = 30  # secondes
     
-    def _get_next_url(self) -> str:
-        """Obtenir le prochain miroir (pour compatibilité)"""
-        return self.base_url
+    async def _get_from_cache(self, symbol: str) -> Optional[float]:
+        """Récupérer le prix depuis le cache"""
+        if symbol in self.cache and symbol in self.cache_time:
+            if (datetime.now() - self.cache_time[symbol]).seconds < self.cache_duration:
+                return self.cache[symbol]
+        return None
+    
+    def _save_to_cache(self, symbol: str, price: float):
+        """Sauvegarder le prix dans le cache"""
+        self.cache[symbol] = price
+        self.cache_time[symbol] = datetime.now()
     
     async def get_price(self, symbol: str) -> Dict:
-        """Obtenir le prix actuel depuis CoinCap"""
+        """Obtenir le prix actuel depuis CoinCap ou Gold-API"""
         try:
-            if symbol not in self.symbols:
-                return {"symbol": symbol, "price": 0, "success": False}
+            # Vérifier le cache d'abord
+            cached_price = await self._get_from_cache(symbol)
+            if cached_price is not None:
+                logger.info(f"📊 {symbol}: ${cached_price:,.2f} (cache)")
+                return {"symbol": symbol, "price": cached_price, "success": True}
             
-            async with httpx.AsyncClient(
-                timeout=15.0,
-                headers=self.headers,
-                follow_redirects=True
-            ) as client:
-                if symbol == "GOLD":
-                    # Or : utiliser gold-api.com
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                if symbol == "BTC":
+                    response = await client.get("https://api.coincap.io/v2/assets/bitcoin")
+                    if response.status_code == 200:
+                        data = response.json()
+                        price = float(data["data"]["priceUsd"])
+                        logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinCap)")
+                        self._save_to_cache(symbol, price)
+                        self.last_prices[symbol] = price
+                        return {"symbol": symbol, "price": price, "success": True}
+                
+                elif symbol == "ETH":
+                    response = await client.get("https://api.coincap.io/v2/assets/ethereum")
+                    if response.status_code == 200:
+                        data = response.json()
+                        price = float(data["data"]["priceUsd"])
+                        logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinCap)")
+                        self._save_to_cache(symbol, price)
+                        self.last_prices[symbol] = price
+                        return {"symbol": symbol, "price": price, "success": True}
+                
+                elif symbol == "GOLD":
+                    # Essayer Gold-API d'abord
                     response = await client.get("https://api.gold-api.com/price/XAU")
                     if response.status_code == 200:
                         data = response.json()
                         price = float(data.get("price", 0))
                         if price > 0:
                             logger.info(f"📊 {symbol}: ${price:,.2f} (via Gold-API)")
+                            self._save_to_cache(symbol, price)
                             self.last_prices[symbol] = price
                             return {"symbol": symbol, "price": price, "success": True}
                     
-                    # Fallback pour l'or
+                    # Fallback: prix approximatif
                     fallback_price = 2400.00
                     logger.warning(f"⚠️ Utilisation du prix fallback pour l'or: ${fallback_price}")
                     return {"symbol": symbol, "price": fallback_price, "success": True}
                 
-                else:
-                    # CoinCap pour BTC et ETH
-                    gecko_id = self.symbols[symbol]
-                    response = await client.get(f"{self.base_url}/assets/{gecko_id}")
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        if "data" in data and "priceUsd" in data["data"]:
-                            price = float(data["data"]["priceUsd"])
-                            logger.info(f"📊 {symbol}: ${price:,.2f} (via CoinCap)")
-                            self.last_prices[symbol] = price
-                            return {"symbol": symbol, "price": price, "success": True}
-                        else:
-                            logger.warning(f"⚠️ Réponse CoinCap inattendue: {data}")
-                    else:
-                        logger.warning(f"⚠️ CoinCap erreur {response.status_code}: {response.text}")
-            
-            # Si CoinCap a échoué, utiliser le dernier prix connu
-            if symbol in self.last_prices and self.last_prices[symbol] > 0:
-                logger.warning(f"⚠️ Utilisation du dernier prix connu: {symbol} = {self.last_prices[symbol]}")
-                return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
-            
-            # Fallback
-            mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
-            price = mock_prices.get(symbol, 0)
-            logger.warning(f"⚠️ Utilisation du prix simulé pour {symbol}: ${price}")
-            return {"symbol": symbol, "price": price, "success": True}
+                return {"symbol": symbol, "price": 0, "success": False}
                 
+        except httpx.TimeoutException:
+            logger.warning(f"⚠️ Timeout pour {symbol}, utilisation du cache si disponible")
+            if symbol in self.last_prices and self.last_prices[symbol] > 0:
+                return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
+            return {"symbol": symbol, "price": 0, "success": False}
+            
         except Exception as e:
             logger.error(f"❌ Erreur {symbol}: {e}")
             if symbol in self.last_prices and self.last_prices[symbol] > 0:
+                logger.warning(f"⚠️ Utilisation du dernier prix connu: {symbol} = {self.last_prices[symbol]}")
                 return {"symbol": symbol, "price": self.last_prices[symbol], "success": True}
-            mock_prices = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
-            return {"symbol": symbol, "price": mock_prices.get(symbol, 0), "success": True}
+            return {"symbol": symbol, "price": 0, "success": False}
     
     async def get_price_with_details(self, symbol: str) -> Dict:
         """Obtenir le prix avec plus de détails"""
@@ -129,27 +117,34 @@ class BinanceService:
         }
     
     async def get_24h_change(self, symbol: str) -> Dict:
-        """Obtenir la variation sur 24h depuis CoinCap"""
+        """Obtenir la variation sur 24h"""
         try:
-            if symbol in ["BTC", "ETH"]:
-                gecko_id = self.symbols.get(symbol)
-                if gecko_id:
-                    async with httpx.AsyncClient(timeout=10.0, headers=self.headers) as client:
-                        response = await client.get(f"{self.base_url}/assets/{gecko_id}")
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            if "data" in data:
-                                return {
-                                    "symbol": symbol,
-                                    "price": float(data["data"]["priceUsd"]),
-                                    "change_24h": float(data["data"]["changePercent24Hr"]),
-                                    "volume": float(data["data"]["volumeUsd24Hr"]),
-                                    "success": True
-                                }
-            elif symbol == "GOLD":
-                # Gold-API pour l'or
-                async with httpx.AsyncClient(timeout=10.0, headers=self.headers) as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                if symbol == "BTC":
+                    response = await client.get("https://api.coincap.io/v2/assets/bitcoin")
+                    if response.status_code == 200:
+                        data = response.json()
+                        return {
+                            "symbol": symbol,
+                            "price": float(data["data"]["priceUsd"]),
+                            "change_24h": float(data["data"]["changePercent24Hr"]),
+                            "volume": float(data["data"]["volumeUsd24Hr"]),
+                            "success": True
+                        }
+                
+                elif symbol == "ETH":
+                    response = await client.get("https://api.coincap.io/v2/assets/ethereum")
+                    if response.status_code == 200:
+                        data = response.json()
+                        return {
+                            "symbol": symbol,
+                            "price": float(data["data"]["priceUsd"]),
+                            "change_24h": float(data["data"]["changePercent24Hr"]),
+                            "volume": float(data["data"]["volumeUsd24Hr"]),
+                            "success": True
+                        }
+                
+                elif symbol == "GOLD":
                     response = await client.get("https://api.gold-api.com/price/XAU")
                     if response.status_code == 200:
                         data = response.json()
@@ -169,17 +164,14 @@ class BinanceService:
             return {"symbol": symbol, "success": False, "change_24h": 0}
     
     async def get_historical_klines(self, symbol: str, interval: str = "1d", limit: int = 30) -> List[Dict]:
-        """Obtenir les donnees historiques (simulées pour CoinCap)"""
+        """Obtenir les données historiques (simulées pour CoinCap)"""
         try:
-            # CoinCap n'a pas de données historiques gratuites sans API key
-            # On utilise une approximation basée sur le prix actuel
             current_price = await self.get_price(symbol)
             if current_price.get("success"):
                 price = current_price["price"]
                 historical = []
                 for i in range(limit - 1, -1, -1):
                     date = datetime.now() - timedelta(days=i)
-                    # Variation aléatoire de ±2% pour simuler l'historique
                     variation = 1 + (random.random() - 0.5) * 0.04
                     historical.append({
                         "timestamp": date.isoformat(),
@@ -191,9 +183,7 @@ class BinanceService:
                     })
                     price = price * variation
                 return historical
-            
             return []
-            
         except Exception as e:
             logger.error(f"Error fetching historical for {symbol}: {e}")
             return []
@@ -254,13 +244,11 @@ class BinanceService:
         
         for symbol in ["BTC", "ETH", "GOLD"]:
             try:
-                # Obtenir le prix actuel
                 current = await self.get_price(symbol)
                 if not current.get("success"):
                     continue
                 
                 current_price = current["price"]
-                # Simuler des données sur 7 jours
                 prices = []
                 price = current_price
                 for i in range(7):
