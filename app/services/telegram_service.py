@@ -19,13 +19,17 @@ class TelegramService:
         self.is_connected = False
         self.message_handler: Optional[Callable] = None
         self.processed_messages = set()
-        self.active_channels = []  # Stocker les canaux actifs
-        self.channel_handlers = {}  # Stocker les handlers par canal
+        self.active_channels = []
+        self.channel_handlers = {}
         
         self.api_id = config.TELEGRAM_API_ID
         self.api_hash = config.TELEGRAM_API_HASH
         self.phone = config.TELEGRAM_PHONE
         self.channel = config.TELEGRAM_CHANNEL
+        
+        # Utiliser une session dédiée
+        self.session_name = "session/telegram_render"
+        logger.info(f"📁 Session Telegram: {self.session_name}")
     
     def get_channels_from_config(self) -> List[str]:
         """Récupérer la liste des chaînes actives depuis config.json"""
@@ -37,7 +41,6 @@ class TelegramService:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config_data = json.load(f)
                 
-                # Récupérer les chaînes actives
                 telegram_channels = config_data.get('telegram_channels', [])
                 for ch in telegram_channels:
                     if ch.get('active', True):
@@ -50,7 +53,6 @@ class TelegramService:
             except Exception as e:
                 logger.error(f"❌ Erreur lecture config.json: {e}")
         
-        # Si aucune chaîne trouvée, utiliser le canal principal
         if not channels and self.channel:
             channels.append(self.channel)
             logger.info(f"📡 Utilisation du canal principal: {self.channel}")
@@ -58,28 +60,44 @@ class TelegramService:
         return channels
     
     async def connect(self) -> bool:
+        """Se connecter à Telegram en utilisant la session existante"""
         try:
             if not self.api_id or not self.api_hash:
                 logger.error("❌ Telegram config incomplete")
                 return False
             
-            logger.info(f"🔑 Connexion avec API_ID: {self.api_id}")
+            # Vérifier si le dossier session existe
+            os.makedirs("session", exist_ok=True)
             
-            self.client = TelegramClient(
-                'session/telegram',
-                self.api_id,
-                self.api_hash
-            )
+            # Vérifier si le fichier de session existe
+            session_file = f"{self.session_name}.session"
+            if os.path.exists(session_file):
+                logger.info(f"✅ Session trouvée: {session_file}")
+            else:
+                logger.warning(f"⚠️ Session non trouvée: {session_file}")
+                logger.warning("   La session doit être créée avec create_session.py")
             
-            await self.client.start(phone=self.phone)
+            # Créer le client avec la session
+            self.client = TelegramClient(self.session_name, self.api_id, self.api_hash)
+            
+            # Se connecter SANS envoyer de code
+            logger.info("🔄 Connexion à Telegram avec la session...")
+            await self.client.connect()
+            
+            # Vérifier si la session est valide
+            if not await self.client.is_user_authorized():
+                logger.error("❌ Session invalide ou expirée")
+                logger.error("   Veuillez régénérer la session avec create_session.py")
+                await self.client.disconnect()
+                return False
+            
             self.is_connected = True
             
-            logger.info("✅ Telegram connected successfully")
-            
-            # Récupérer les informations du compte
+            # Récupérer les infos
             me = await self.client.get_me()
+            logger.info(f"✅ Telegram connecté avec succès")
             logger.info(f"👤 Connecté en tant que: {me.first_name} (@{me.username})")
-            
+            logger.info(f"🆔 ID: {me.id}")
             return True
             
         except Exception as e:
@@ -90,7 +108,6 @@ class TelegramService:
     async def disconnect(self) -> bool:
         try:
             if self.client:
-                # Supprimer tous les handlers
                 if hasattr(self.client, 'remove_event_handler'):
                     for handler in self.channel_handlers.values():
                         self.client.remove_event_handler(handler)
@@ -105,7 +122,7 @@ class TelegramService:
             return False
     
     async def start_listening(self, message_callback: Callable) -> bool:
-        """Écouter un seul canal (méthode originale)"""
+        """Écouter un seul canal"""
         if not self.is_connected or not self.client:
             logger.error("❌ Not connected to Telegram")
             return False
@@ -127,7 +144,7 @@ class TelegramService:
             return False
     
     async def start_listening_multiple(self, message_callback: Callable) -> bool:
-        """Écouter plusieurs chaînes Telegram depuis config.json avec rechargement dynamique"""
+        """Écouter plusieurs chaînes Telegram"""
         if not self.is_connected or not self.client:
             logger.error("❌ Not connected to Telegram")
             return False
@@ -156,7 +173,6 @@ class TelegramService:
                     logger.info(f"✅ Accès confirmé au canal: {channel} (ID: {entity.id})")
                 except Exception as e:
                     logger.warning(f"⚠️ Impossible d'accéder au canal {channel}: {e}")
-                    logger.warning(f"   Assurez-vous que le bot est membre du canal")
             
             # Ajouter un handler pour chaque canal
             for channel in channels:
@@ -164,7 +180,6 @@ class TelegramService:
                 async def handler(event, ch=channel):
                     logger.info(f"🔔 ÉVÉNEMENT DÉCLENCHÉ pour {ch}")
                     
-                    # Vérifier si la chaîne est toujours active
                     config_file = "config.json"
                     is_active = True
                     if os.path.exists(config_file):
@@ -198,18 +213,16 @@ class TelegramService:
             return False
     
     async def reload_channels(self) -> bool:
-        """Recharger les chaînes en cours d'exécution"""
+        """Recharger les chaînes"""
         if not self.is_connected or not self.client:
             logger.error("❌ Not connected to Telegram")
             return False
         
         try:
-            # Nettoyer les anciens handlers
             for handler in self.channel_handlers.values():
                 self.client.remove_event_handler(handler)
             self.channel_handlers.clear()
             
-            # Récupérer les chaînes actives
             channels = self.get_channels_from_config()
             
             if not channels:
@@ -218,13 +231,11 @@ class TelegramService:
             
             logger.info(f"🔄 Rechargement des canaux: {channels}")
             
-            # Ajouter un handler pour chaque canal
             for channel in channels:
                 @self.client.on(events.NewMessage(chats=channel))
                 async def handler(event, ch=channel):
                     logger.info(f"🔔 ÉVÉNEMENT DÉCLENCHÉ pour {ch}")
                     
-                    # Vérifier si la chaîne est toujours active
                     config_file = "config.json"
                     is_active = True
                     if os.path.exists(config_file):
@@ -260,7 +271,6 @@ class TelegramService:
             
             message_id = str(message.id)
             
-            # Vérifier si déjà traité
             if message_id in self.processed_messages:
                 logger.info(f"⏭️ Message déjà traité: {message_id}")
                 return
@@ -270,7 +280,6 @@ class TelegramService:
                 logger.info(f"📭 Message sans texte - ID: {message_id}")
                 return
             
-            # Récupérer le nom du canal
             channel_name = ""
             if message.chat:
                 channel_name = message.chat.username or message.chat.title or "unknown"
@@ -292,19 +301,17 @@ class TelegramService:
             logger.error(f"❌ Error handling message: {e}")
     
     async def send_test_message(self, channel: str = None) -> bool:
-        """Envoyer un message de test"""
         try:
             target = channel or self.channel
             if not target:
                 logger.error("❌ Aucun canal cible")
                 return False
             
-            logger.info(f"📤 Envoi d'un message de test à {target}")
             await self.client.send_message(
                 target,
                 "🤖 Test du bot LongTerm AI - Connexion établie!"
             )
-            logger.info(f"✅ Message de test envoyé à {target}")
+            logger.info(f"📤 Message de test envoyé à {target}")
             return True
             
         except Exception as e:
@@ -312,14 +319,12 @@ class TelegramService:
             return False
     
     async def get_recent_messages(self, channel: str = None, limit: int = 10) -> List[Message]:
-        """Récupérer les derniers messages d'un canal"""
         try:
             target = channel or self.channel
             if not target:
                 logger.error("❌ Aucun canal cible")
                 return []
             
-            logger.info(f"📥 Récupération des {limit} derniers messages de {target}")
             messages = []
             async for message in self.client.iter_messages(target, limit=limit):
                 messages.append(message)
@@ -332,7 +337,6 @@ class TelegramService:
             return []
     
     async def list_joined_channels(self) -> List[dict]:
-        """Liste tous les canaux où le bot est membre"""
         try:
             logger.info("📡 Récupération de la liste des canaux...")
             dialogs = await self.client.get_dialogs()
@@ -343,7 +347,6 @@ class TelegramService:
                         "name": dialog.name,
                         "username": dialog.entity.username,
                         "id": dialog.id,
-                        "participants_count": getattr(dialog.entity, 'participants_count', None)
                     })
             logger.info(f"📡 Canaux où le bot est membre: {len(channels)}")
             for ch in channels:
