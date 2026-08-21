@@ -63,6 +63,8 @@ class TelegramService:
                 logger.error("❌ Telegram config incomplete")
                 return False
             
+            logger.info(f"🔑 Connexion avec API_ID: {self.api_id}")
+            
             self.client = TelegramClient(
                 'session/telegram',
                 self.api_id,
@@ -73,6 +75,11 @@ class TelegramService:
             self.is_connected = True
             
             logger.info("✅ Telegram connected successfully")
+            
+            # Récupérer les informations du compte
+            me = await self.client.get_me()
+            logger.info(f"👤 Connecté en tant que: {me.first_name} (@{me.username})")
+            
             return True
             
         except Exception as e:
@@ -108,6 +115,7 @@ class TelegramService:
         try:
             @self.client.on(events.NewMessage(chats=self.channel))
             async def handler(event):
+                logger.info(f"🔔 ÉVÉNEMENT DÉCLENCHÉ pour {self.channel}")
                 await self._handle_message(event.message)
             
             logger.info(f"👀 Listening to channel: {self.channel}")
@@ -141,10 +149,21 @@ class TelegramService:
             
             logger.info(f"📡 Écoute de {len(channels)} canaux: {channels}")
             
+            # Vérifier l'accès aux canaux
+            for channel in channels:
+                try:
+                    entity = await self.client.get_entity(channel)
+                    logger.info(f"✅ Accès confirmé au canal: {channel} (ID: {entity.id})")
+                except Exception as e:
+                    logger.warning(f"⚠️ Impossible d'accéder au canal {channel}: {e}")
+                    logger.warning(f"   Assurez-vous que le bot est membre du canal")
+            
             # Ajouter un handler pour chaque canal
             for channel in channels:
                 @self.client.on(events.NewMessage(chats=channel))
                 async def handler(event, ch=channel):
+                    logger.info(f"🔔 ÉVÉNEMENT DÉCLENCHÉ pour {ch}")
+                    
                     # Vérifier si la chaîne est toujours active
                     config_file = "config.json"
                     is_active = True
@@ -203,6 +222,8 @@ class TelegramService:
             for channel in channels:
                 @self.client.on(events.NewMessage(chats=channel))
                 async def handler(event, ch=channel):
+                    logger.info(f"🔔 ÉVÉNEMENT DÉCLENCHÉ pour {ch}")
+                    
                     # Vérifier si la chaîne est toujours active
                     config_file = "config.json"
                     is_active = True
@@ -235,14 +256,18 @@ class TelegramService:
     
     async def _handle_message(self, message: Message):
         try:
+            logger.info(f"🔍 _handle_message appelé - ID: {message.id}")
+            
             message_id = str(message.id)
             
             # Vérifier si déjà traité
             if message_id in self.processed_messages:
+                logger.info(f"⏭️ Message déjà traité: {message_id}")
                 return
             
             text = message.text
             if not text:
+                logger.info(f"📭 Message sans texte - ID: {message_id}")
                 return
             
             # Récupérer le nom du canal
@@ -257,8 +282,11 @@ class TelegramService:
                 self.processed_messages.clear()
             
             if self.message_handler:
-                # Appeler avec 3 arguments
+                logger.info(f"📤 Appel du message_handler pour: {text[:50]}...")
                 await self.message_handler(text, message_id, message.date)
+                logger.info(f"✅ message_handler exécuté avec succès")
+            else:
+                logger.warning("⚠️ Aucun message_handler configuré")
             
         except Exception as e:
             logger.error(f"❌ Error handling message: {e}")
@@ -271,11 +299,12 @@ class TelegramService:
                 logger.error("❌ Aucun canal cible")
                 return False
             
+            logger.info(f"📤 Envoi d'un message de test à {target}")
             await self.client.send_message(
                 target,
                 "🤖 Test du bot LongTerm AI - Connexion établie!"
             )
-            logger.info(f"📤 Message de test envoyé à {target}")
+            logger.info(f"✅ Message de test envoyé à {target}")
             return True
             
         except Exception as e:
@@ -290,6 +319,7 @@ class TelegramService:
                 logger.error("❌ Aucun canal cible")
                 return []
             
+            logger.info(f"📥 Récupération des {limit} derniers messages de {target}")
             messages = []
             async for message in self.client.iter_messages(target, limit=limit):
                 messages.append(message)
@@ -299,4 +329,26 @@ class TelegramService:
             
         except Exception as e:
             logger.error(f"❌ Erreur récupération messages: {e}")
+            return []
+    
+    async def list_joined_channels(self) -> List[dict]:
+        """Liste tous les canaux où le bot est membre"""
+        try:
+            logger.info("📡 Récupération de la liste des canaux...")
+            dialogs = await self.client.get_dialogs()
+            channels = []
+            for dialog in dialogs:
+                if dialog.is_channel:
+                    channels.append({
+                        "name": dialog.name,
+                        "username": dialog.entity.username,
+                        "id": dialog.id,
+                        "participants_count": getattr(dialog.entity, 'participants_count', None)
+                    })
+            logger.info(f"📡 Canaux où le bot est membre: {len(channels)}")
+            for ch in channels:
+                logger.info(f"   - {ch['name']} (@{ch['username']})")
+            return channels
+        except Exception as e:
+            logger.error(f"❌ Erreur liste canaux: {e}")
             return []
