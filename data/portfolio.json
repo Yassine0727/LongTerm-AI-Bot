@@ -1,6 +1,20 @@
 {
-  "tnd_usd_rate": 3.8,
+  "tnd_usd_rate": 3.25,
   "fee_percent": 0,
-  "transactions": [],
-  "holdings": {}
+  "transactions": [
+    {
+      "id": 1,
+      "date": "2025-03-19",
+      "actif": "BTC",
+      "type": "achat",
+      "montant_dt": 400,
+      "prix_usd": 77556.03,
+      "taux_dt_usd": 3.25,
+      "quantite": 0.001587,
+      "prix_achat_dt": 252057.10
+    }
+  ],
+  "holdings": {
+    "BTC": 0.001587
+  }
 }
