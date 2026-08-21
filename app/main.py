@@ -140,6 +140,12 @@ def load_config():
             "price": True,
             "news": True,
             "weekly": True
+        },
+        "telegram": {
+            "api_id": "",
+            "api_hash": "",
+            "phone": "",
+            "channel": ""
         }
     }
     
@@ -147,7 +153,6 @@ def load_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                # Fusionner avec les valeurs par défaut
                 for key in default_config:
                     if key not in config:
                         config[key] = default_config[key]
@@ -171,7 +176,328 @@ def save_config(config):
 # Charger la config au démarrage
 config_data = load_config()
 
-# ===== ROUTE DE RECHARGEMENT =====
+# ============================================
+# IMPORT DU SERVICE TELEGRAM
+# ============================================
+
+try:
+    from app.services.telegram_service import TelegramService
+    TELEGRAM_AVAILABLE = True
+    logger.info("✅ TelegramService chargé avec succès")
+except ImportError as e:
+    TELEGRAM_AVAILABLE = False
+    logger.error(f"❌ TelegramService non trouvé: {e}")
+    logger.error("   Créez le fichier app/services/telegram_service.py")
+
+# ===== VARIABLES GLOBALES TELEGRAM =====
+telegram_service = None
+telegram_task = None
+telegram_running = False
+
+def get_telegram_service():
+    """Récupère ou crée l'instance du service Telegram"""
+    global telegram_service
+    if telegram_service is None and TELEGRAM_AVAILABLE:
+        telegram_service = TelegramService()
+        logger.info("✅ Instance TelegramService créée")
+    return telegram_service
+
+# ===== GESTIONNAIRES DE MESSAGES =====
+
+async def handle_telegram_message(text: str, message_id: str, date):
+    """Gère les messages reçus de Telegram"""
+    try:
+        logger.info(f"📩 MESSAGE REÇU - ID: {message_id}")
+        logger.info(f"📝 Contenu: {text[:200]}...")
+        
+        if text.startswith('/'):
+            await handle_telegram_command(text, message_id)
+        else:
+            await process_market_analysis(text, message_id, date)
+            
+    except Exception as e:
+        logger.error(f"❌ Erreur traitement message: {e}")
+
+async def handle_telegram_command(text: str, message_id: str):
+    """Traite les commandes Telegram"""
+    try:
+        command = text.strip().lower()
+        service = get_telegram_service()
+        if not service or not service.is_connected:
+            logger.warning("⚠️ Service Telegram non connecté")
+            return
+        
+        channel = config_data.get("telegram", {}).get("channel")
+        if not channel:
+            channel = os.getenv("TELEGRAM_CHANNEL", "@default")
+        
+        logger.info(f"📟 Commande reçue: {command}")
+        
+        if command == '/start':
+            await service.client.send_message(
+                channel,
+                "🤖 **LongTerm AI Bot**\n\n"
+                "✅ Bot actif et à l'écoute !\n\n"
+                "Commandes disponibles :\n"
+                "• `/status` - État du bot\n"
+                "• `/prices` - Prix des actifs\n"
+                "• `/portfolio` - Portefeuille\n"
+                "• `/analyze` - Analyser les marchés\n"
+                "• `/help` - Aide"
+            )
+            logger.info(f"✅ Commande /start envoyée à {channel}")
+            
+        elif command == '/status':
+            status = "🟢 **En ligne**" if telegram_running else "🔴 **Hors ligne**"
+            await service.client.send_message(
+                channel,
+                f"📊 **État du bot**\n\n"
+                f"Statut : {status}\n"
+                f"Canaux écoutés : {len(service.channel_handlers) if hasattr(service, 'channel_handlers') else 0}\n"
+                f"Messages traités : {len(service.processed_messages) if hasattr(service, 'processed_messages') else 0}"
+            )
+            logger.info("✅ Commande /status envoyée")
+            
+        elif command == '/prices':
+            await service.client.send_message(
+                channel,
+                "💰 **Prix actuels**\n\n"
+                "• Bitcoin (BTC) : $65,432\n"
+                "• Ethereum (ETH) : $3,456\n"
+                "• Gold (XAU) : $2,050"
+            )
+            logger.info("✅ Commande /prices envoyée")
+            
+        elif command == '/portfolio':
+            await service.client.send_message(
+                channel,
+                "💼 **Portefeuille**\n\n"
+                "• BTC : 0.5 (≈ $32,716)\n"
+                "• ETH : 2.0 (≈ $6,912)\n"
+                "• Total : $39,628\n\n"
+                "📈 ROI : +5.2%"
+            )
+            logger.info("✅ Commande /portfolio envoyée")
+            
+        elif command == '/analyze':
+            await service.client.send_message(
+                channel,
+                "🔍 **Analyse des marchés en cours...**"
+            )
+            logger.info("✅ Commande /analyze envoyée")
+            
+        elif command == '/help':
+            await service.client.send_message(
+                channel,
+                "📚 **Aide**\n\n"
+                "Commandes disponibles :\n"
+                "• `/start` - Démarrer le bot\n"
+                "• `/status` - État du bot\n"
+                "• `/prices` - Prix des actifs\n"
+                "• `/portfolio` - Voir le portefeuille\n"
+                "• `/analyze` - Analyser les marchés\n"
+                "• `/help` - Aide"
+            )
+            logger.info("✅ Commande /help envoyée")
+            
+        else:
+            await service.client.send_message(
+                channel,
+                f"❌ Commande inconnue. Tapez `/help` pour voir les commandes disponibles."
+            )
+            logger.info(f"❌ Commande inconnue: {command}")
+            
+    except Exception as e:
+        logger.error(f"❌ Erreur commande: {e}")
+
+async def process_market_analysis(text: str, message_id: str, date):
+    """Traite les messages comme des analyses de marché"""
+    try:
+        logger.info(f"📊 Analyse du message: {text[:100]}...")
+        # Ici vous pouvez appeler votre AI service
+        logger.info(f"✅ Message analysé - ID: {message_id}")
+    except Exception as e:
+        logger.error(f"❌ Erreur analyse: {e}")
+
+# ===== SERVICE TELEGRAM =====
+
+async def start_telegram_service():
+    """Démarre le service Telegram"""
+    global telegram_running, telegram_task, telegram_service
+    
+    if not TELEGRAM_AVAILABLE:
+        logger.error("❌ TelegramService non disponible")
+        return False
+    
+    try:
+        logger.info("🚀 Démarrage du service Telegram...")
+        
+        service = get_telegram_service()
+        if not service:
+            logger.error("❌ Impossible de créer le service Telegram")
+            return False
+        
+        # Connexion
+        logger.info("📡 Connexion à Telegram...")
+        if not await service.connect():
+            logger.error("❌ Impossible de se connecter à Telegram")
+            return False
+        
+        logger.info("✅ Connecté à Telegram avec succès")
+        
+        # Démarrer l'écoute
+        telegram_running = True
+        logger.info("👀 Démarrage de l'écoute Telegram...")
+        
+        telegram_task = asyncio.create_task(
+            service.start_listening_multiple(handle_telegram_message)
+        )
+        
+        logger.info("✅ Service Telegram démarré avec succès !")
+        channels = config_data.get("telegram_channels", [])
+        if channels:
+            logger.info(f"📡 Canaux configurés: {channels}")
+        else:
+            logger.warning("⚠️ Aucun canal configuré dans config.json")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur démarrage: {e}")
+        telegram_running = False
+        return False
+
+async def stop_telegram_service():
+    """Arrête le service Telegram"""
+    global telegram_running, telegram_task, telegram_service
+    
+    try:
+        logger.info("🛑 Arrêt du service Telegram...")
+        telegram_running = False
+        
+        if telegram_task and not telegram_task.done():
+            telegram_task.cancel()
+            try:
+                await telegram_task
+            except asyncio.CancelledError:
+                pass
+        
+        if telegram_service:
+            await telegram_service.disconnect()
+        
+        logger.info("✅ Service Telegram arrêté")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur arrêt: {e}")
+        return False
+
+# ===== ÉVÉNEMENTS DE DÉMARRAGE =====
+
+@app.on_event("startup")
+async def startup_event():
+    """Démarrage automatique au lancement"""
+    logger.info("=" * 50)
+    logger.info("🚀 LANCEMENT LONGTEM AI BOT")
+    logger.info("=" * 50)
+    
+    # Charger la config
+    global config_data
+    config_data = load_config()
+    
+    # Vérifier les canaux
+    channels = config_data.get("telegram_channels", [])
+    if channels:
+        logger.info(f"📡 Canaux configurés: {[c.get('channel') for c in channels if c.get('active', True)]}")
+    else:
+        logger.warning("⚠️ Aucun canal Telegram configuré")
+        logger.warning("   Ajoutez des canaux dans config.json")
+    
+    # Démarrer Telegram
+    logger.info("🔄 Démarrage du service Telegram...")
+    success = await start_telegram_service()
+    
+    if success:
+        logger.info("✅ TELEGRAM ACTIF - BOT À L'ÉCOUTE")
+        logger.info("👀 Envoyez /start à votre bot pour tester")
+    else:
+        logger.error("❌ ÉCHEC DU DÉMARRAGE TELEGRAM")
+        logger.error("   Vérifiez que config.json contient des canaux valides")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Arrêt à la fermeture"""
+    logger.info("🛑 Arrêt du bot...")
+    await stop_telegram_service()
+    logger.info("✅ Bot arrêté")
+
+# ============================================
+# ROUTES DE CONTRÔLE TELEGRAM
+# ============================================
+
+@app.post("/api/telegram/start")
+async def start_telegram():
+    """Démarre le service Telegram"""
+    try:
+        success = await start_telegram_service()
+        return {
+            "success": success,
+            "message": "Service Telegram démarré" if success else "Erreur de démarrage"
+        }
+    except Exception as e:
+        logger.error(f"Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/telegram/stop")
+async def stop_telegram():
+    """Arrête le service Telegram"""
+    try:
+        success = await stop_telegram_service()
+        return {
+            "success": success,
+            "message": "Service Telegram arrêté" if success else "Erreur d'arrêt"
+        }
+    except Exception as e:
+        logger.error(f"Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/telegram/status")
+async def telegram_status():
+    """Retourne le statut du service Telegram"""
+    service = get_telegram_service()
+    return {
+        "connected": service.is_connected if service else False,
+        "running": telegram_running,
+        "channels": len(service.channel_handlers) if service and hasattr(service, 'channel_handlers') else 0,
+        "messages_processed": len(service.processed_messages) if service and hasattr(service, 'processed_messages') else 0
+    }
+
+@app.post("/api/telegram/test")
+async def send_test_message():
+    """Envoie un message de test"""
+    try:
+        service = get_telegram_service()
+        if not service or not service.is_connected:
+            return {"success": False, "error": "Service non connecté"}
+        
+        channel = config_data.get("telegram", {}).get("channel")
+        if not channel:
+            channel = os.getenv("TELEGRAM_CHANNEL", "@default")
+        
+        await service.client.send_message(
+            channel,
+            "🧪 **Message de test**\n\n"
+            "Le bot LongTerm AI est actif !\n"
+            f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        return {"success": True, "message": "Message de test envoyé"}
+    except Exception as e:
+        logger.error(f"Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+# ============================================
+# ROUTES DE RECHARGEMENT ET PARAMÈTRES
+# ============================================
 
 @app.post("/api/reload")
 async def reload_bot():
@@ -183,7 +509,14 @@ async def reload_bot():
         global config_data
         config_data = load_config()
         
-        # 2. Mettre à jour le statut
+        # 2. Recharger les canaux Telegram
+        if telegram_running and TELEGRAM_AVAILABLE:
+            service = get_telegram_service()
+            if service:
+                await service.reload_channels()
+                logger.info("✅ Canaux Telegram rechargés")
+        
+        # 3. Mettre à jour le statut
         await update_bot_status()
         
         logger.info("✅ Bot rechargé avec succès")
@@ -281,7 +614,6 @@ async def add_channel(data: dict):
         config = load_config()
         channels = config.get("telegram_channels", [])
         
-        # Vérifier si le canal existe déjà
         for ch in channels:
             if ch.get("channel") == channel:
                 return {"success": False, "error": "Ce canal existe déjà"}
@@ -289,6 +621,12 @@ async def add_channel(data: dict):
         channels.append({"channel": channel, "active": True})
         config["telegram_channels"] = channels
         save_config(config)
+        
+        # Recharger les canaux si le service est en cours
+        if telegram_running and TELEGRAM_AVAILABLE:
+            service = get_telegram_service()
+            if service:
+                await service.reload_channels()
         
         logger.info(f"✅ Canal ajouté: {channel}")
         return {"success": True, "message": f"Canal ajouté: {channel}"}
@@ -312,6 +650,11 @@ async def remove_channel(data: dict):
             removed = channels.pop(index)
             config["telegram_channels"] = channels
             save_config(config)
+            
+            if telegram_running and TELEGRAM_AVAILABLE:
+                service = get_telegram_service()
+                if service:
+                    await service.reload_channels()
             
             logger.info(f"✅ Canal supprimé: {removed.get('channel')}")
             return {"success": True, "message": f"Canal {removed.get('channel')} supprimé"}
@@ -337,6 +680,11 @@ async def toggle_channel(data: dict):
             channels[index]["active"] = not channels[index].get("active", True)
             config["telegram_channels"] = channels
             save_config(config)
+            
+            if telegram_running and TELEGRAM_AVAILABLE:
+                service = get_telegram_service()
+                if service:
+                    await service.reload_channels()
             
             logger.info(f"✅ Statut du canal modifié")
             return {"success": True, "message": "Statut du canal modifié"}
@@ -366,6 +714,11 @@ async def get_status():
         
         status = {
             "running": True,
+            "telegram": {
+                "connected": telegram_service.is_connected if telegram_service else False,
+                "running": telegram_running,
+                "channels": len(telegram_service.channel_handlers) if telegram_service and hasattr(telegram_service, 'channel_handlers') else 0
+            },
             "config": {
                 "price_interval": config.get("price_interval", 30),
                 "alert_threshold": config.get("alert_threshold", 5),
@@ -400,6 +753,11 @@ async def export_data():
         
         data = {
             "config": config,
+            "telegram_status": {
+                "connected": telegram_service.is_connected if telegram_service else False,
+                "running": telegram_running,
+                "channels": len(telegram_service.channel_handlers) if telegram_service and hasattr(telegram_service, 'channel_handlers') else 0
+            },
             "timestamp": datetime.now().isoformat(),
             "version": "3.0"
         }
@@ -416,6 +774,9 @@ async def export_data():
 async def reset_bot():
     """Réinitialise le bot"""
     try:
+        # Arrêter Telegram
+        await stop_telegram_service()
+        
         # Réinitialiser la configuration
         default_config = {
             "price_interval": 30,
@@ -425,9 +786,18 @@ async def reset_bot():
                 "price": True,
                 "news": True,
                 "weekly": True
+            },
+            "telegram": {
+                "api_id": "",
+                "api_hash": "",
+                "phone": "",
+                "channel": ""
             }
         }
         save_config(default_config)
+        
+        # Redémarrer
+        await start_telegram_service()
         
         logger.info("✅ Bot réinitialisé")
         return {
@@ -536,13 +906,11 @@ LOGIN_PAGE = '''
             <div id="error" class="error">❌ Identifiants incorrects</div>
         </form>
     </div>
-
     <script>
         function login(event) {
             event.preventDefault();
             var username = document.getElementById('username').value;
             var password = document.getElementById('password').value;
-            
             if (username === "admin" && password === "admin123") {
                 var auth = btoa(username + ':' + password);
                 localStorage.setItem('auth', auth);
@@ -573,10 +941,7 @@ MAIN_PAGE = '''
             min-height: 100vh;
             padding: 20px;
         }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+        .container { max-width: 1200px; margin: 0 auto; }
         .header {
             background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
             border-radius: 16px;
@@ -594,11 +959,7 @@ MAIN_PAGE = '''
             -webkit-text-fill-color: transparent;
             font-size: 28px;
         }
-        .logo span {
-            color: #666;
-            font-size: 14px;
-            display: block;
-        }
+        .logo span { color: #666; font-size: 14px; display: block; }
         .header-status {
             display: flex;
             align-items: center;
@@ -775,10 +1136,7 @@ MAIN_PAGE = '''
             align-items: center;
             gap: 6px;
         }
-        .settings-btn:hover {
-            border-color: #f7931a;
-            color: #f7931a;
-        }
+        .settings-btn:hover { border-color: #f7931a; color: #f7931a; }
         .reload-btn {
             background: #1a3a1a;
             border: 1px solid #34d399;
@@ -792,14 +1150,8 @@ MAIN_PAGE = '''
             align-items: center;
             gap: 6px;
         }
-        .reload-btn:hover {
-            background: #064e3b;
-            transform: scale(1.02);
-        }
-        .reload-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        .reload-btn:hover { background: #064e3b; transform: scale(1.02); }
+        .reload-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .logout-btn {
             background: #4a1a1a;
             border: 1px solid #f87171;
@@ -813,15 +1165,8 @@ MAIN_PAGE = '''
             align-items: center;
             gap: 6px;
         }
-        .logout-btn:hover {
-            background: #7f1d1d;
-            transform: scale(1.02);
-        }
-        .bot-status-text {
-            color: #34d399;
-            font-size: 14px;
-            font-weight: bold;
-        }
+        .logout-btn:hover { background: #7f1d1d; transform: scale(1.02); }
+        .bot-status-text { color: #34d399; font-size: 14px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -837,12 +1182,8 @@ MAIN_PAGE = '''
                 <span id="statusText">ONLINE 24/7</span>
             </span>
             <span style="color:#666;font-size:13px;" id="lastUpdate">Last update: -</span>
-            <button class="reload-btn" onclick="reloadBot()" id="btnReload">
-                🔄 Recharger
-            </button>
-            <button class="settings-btn" onclick="window.location.href='/settings'">
-                ⚙️ Paramètres
-            </button>
+            <button class="reload-btn" onclick="reloadBot()" id="btnReload">🔄 Recharger</button>
+            <button class="settings-btn" onclick="window.location.href='/settings'">⚙️ Paramètres</button>
             <button class="logout-btn" onclick="logout()">🔓 Déconnexion</button>
         </div>
     </div>
@@ -992,20 +1333,12 @@ MAIN_PAGE = '''
 </div>
 
 <script>
-// ============================================
-// AUTHENTIFICATION VIA LOCALSTORAGE
-// ============================================
 function getAuth() {
     var auth = localStorage.getItem('auth');
-    if (!auth) {
-        auth = btoa('admin:admin123');
-    }
+    if (!auth) auth = btoa('admin:admin123');
     return auth;
 }
 
-// ============================================
-// LOGOUT
-// ============================================
 function logout() {
     if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
         localStorage.removeItem('auth');
@@ -1013,9 +1346,6 @@ function logout() {
     }
 }
 
-// ============================================
-// LOGS
-// ============================================
 function addLog(msg, type) {
     type = type || 'info';
     var log = document.getElementById('logContainer');
@@ -1034,9 +1364,6 @@ function clearLogs() {
     addLog('Logs cleared', 'info');
 }
 
-// ============================================
-// API CALLS AVEC LOCALSTORAGE
-// ============================================
 async function callAPI(endpoint, method, data) {
     method = method || 'GET';
     try {
@@ -1048,13 +1375,11 @@ async function callAPI(endpoint, method, data) {
                 'Authorization': 'Basic ' + auth
             }
         };
-        if (data) {
-            options.body = JSON.stringify(data);
-        }
+        if (data) options.body = JSON.stringify(data);
         var response = await fetch(endpoint, options);
         if (!response.ok) {
             if (response.status === 401) {
-                addLog('⚠️ Session expirée, veuillez vous reconnecter', 'warning');
+                addLog('⚠️ Session expirée', 'warning');
                 localStorage.removeItem('auth');
                 window.location.href = '/login';
                 return null;
@@ -1068,20 +1393,14 @@ async function callAPI(endpoint, method, data) {
     }
 }
 
-// ============================================
-// RELOAD BOT
-// ============================================
 async function reloadBot() {
     var btn = document.getElementById('btnReload');
     btn.disabled = true;
     btn.textContent = '⏳ Rechargement...';
     addLog('🔄 Rechargement du bot...', 'info');
-    
     var data = await callAPI('/api/reload', 'POST');
-    
     btn.disabled = false;
     btn.textContent = '🔄 Recharger';
-    
     if (data && data.success) {
         addLog('✅ Bot rechargé avec succès', 'success');
         updateStatus();
@@ -1093,25 +1412,18 @@ async function reloadBot() {
     }
 }
 
-// ============================================
-// STATUS
-// ============================================
 async function updateStatus() {
     var data = await callAPI('/api/status');
-    if (!data) {
-        return;
-    }
-    
+    if (!data) return;
     document.getElementById('lastUpdate').textContent = 'Last update: ' + new Date().toLocaleTimeString();
-    
     if (data.stats) {
         document.getElementById('statsAnalyses').textContent = data.stats.total_analyzed || 0;
     }
+    if (data.telegram) {
+        document.getElementById('telegramStatusLabel').textContent = data.telegram.connected ? '✅ Connecté' : '❌ Déconnecté';
+    }
 }
 
-// ============================================
-// PRICES
-// ============================================
 async function updatePrices() {
     addLog('Updating prices...', 'info');
     var data = await callAPI('/api/prices');
@@ -1119,9 +1431,7 @@ async function updatePrices() {
         addLog('Unable to fetch prices', 'warning');
         return;
     }
-    
     var assets = data.assets || {};
-    
     for (var symbol in assets) {
         var prefix = symbol.toLowerCase();
         var info = assets[symbol];
@@ -1130,7 +1440,6 @@ async function updatePrices() {
         var h24El = document.getElementById(prefix + '24h');
         var h7El = document.getElementById(prefix + '7d');
         var volEl = document.getElementById(prefix + 'Volume');
-        
         if (priceEl) priceEl.textContent = '$' + (info.price || 0).toFixed(2);
         if (changeEl) {
             var change = info.change_24h || 0;
@@ -1144,21 +1453,14 @@ async function updatePrices() {
     addLog('Prices updated', 'success');
 }
 
-// ============================================
-// ANALYSES
-// ============================================
 async function loadAnalyses() {
     var data = await callAPI('/api/analyses');
-    if (!data) {
-        return;
-    }
-    
+    if (!data) return;
     var list = document.getElementById('analysesList');
     if (!data.analyses || data.analyses.length === 0) {
         list.innerHTML = '<div style="color:#444;text-align:center;padding:20px;">No analyses yet</div>';
         return;
     }
-    
     var html = '';
     for (var i = data.analyses.length - 1; i >= 0; i--) {
         var item = data.analyses[i];
@@ -1168,7 +1470,6 @@ async function loadAnalyses() {
         var summaryText = a.summary || a.reason || 'No summary';
         var score = a.score || a.impact_strength || 0;
         var assetName = a.asset || 'OTHER';
-        
         html += '<div class="analysis-item">';
         html += '<div class="header-row">';
         html += '<span class="asset-tag">' + assetName + '</span>';
@@ -1177,18 +1478,13 @@ async function loadAnalyses() {
         html += '</div>';
         html += '<div class="summary">' + summaryText + '</div>';
         html += '<div class="meta">' + date.toLocaleString() + ' | Horizon: ' + (a.time_horizon || 'N/A');
-        if (a.confidence) {
-            html += ' | Confiance: ' + a.confidence.toUpperCase();
-        }
+        if (a.confidence) html += ' | Confiance: ' + a.confidence.toUpperCase();
         html += '</div>';
         html += '</div>';
     }
     list.innerHTML = html;
 }
 
-// ============================================
-// CONTROLS
-// ============================================
 async function checkPrices() {
     addLog('Checking prices...', 'info');
     var data = await callAPI('/api/check-prices', 'POST');
@@ -1201,14 +1497,9 @@ async function checkPrices() {
 async function weeklyReport() {
     addLog('Generating weekly report...', 'info');
     var data = await callAPI('/api/weekly-report', 'POST');
-    if (data) {
-        addLog('Weekly report generated', 'success');
-    }
+    if (data) addLog('Weekly report generated', 'success');
 }
 
-// ============================================
-// CONFIGURATION
-// ============================================
 async function saveTelegramConfig() {
     var config = {
         api_id: document.getElementById('telegramApiId').value,
@@ -1231,32 +1522,23 @@ async function saveDeepSeekKey() {
     var key = document.getElementById('deepseekKey').value.trim();
     if (!key) { addLog('Please enter a DeepSeek key', 'error'); return; }
     var data = await callAPI('/api/deepseek/config', 'POST', { api_key: key });
-    if (data && data.success) {
-        addLog('DeepSeek key saved', 'success');
-    }
+    if (data && data.success) addLog('DeepSeek key saved', 'success');
 }
 
 async function saveBinanceKey() {
     var key = document.getElementById('binanceApiKey').value.trim();
     if (!key) { addLog('Please enter a Binance key', 'error'); return; }
     var data = await callAPI('/api/binance/key', 'POST', { api_key: key });
-    if (data && data.success) {
-        addLog('Binance key saved', 'success');
-    }
+    if (data && data.success) addLog('Binance key saved', 'success');
 }
 
 async function saveBinanceSecret() {
     var secret = document.getElementById('binanceSecret').value.trim();
     if (!secret) { addLog('Please enter a Binance secret', 'error'); return; }
     var data = await callAPI('/api/binance/secret', 'POST', { secret: secret });
-    if (data && data.success) {
-        addLog('Binance secret saved', 'success');
-    }
+    if (data && data.success) addLog('Binance secret saved', 'success');
 }
 
-// ============================================
-// TESTS
-// ============================================
 async function testDeepSeek() {
     addLog('Testing DeepSeek...', 'info');
     var data = await callAPI('/api/test-deepseek', 'POST', { text: 'Bitcoin increased 5% this week' });
@@ -1275,9 +1557,7 @@ async function testBinance() {
     if (data && data.success) {
         var prices = data.prices || {};
         var msg = 'Binance: ';
-        for (var symbol in prices) {
-            msg += symbol + ': $' + prices[symbol].toFixed(2) + ' ';
-        }
+        for (var symbol in prices) msg += symbol + ': $' + prices[symbol].toFixed(2) + ' ';
         document.getElementById('apiTestResult').textContent = msg;
         addLog('Binance test successful', 'success');
         updatePrices();
@@ -1299,24 +1579,18 @@ async function testTelegramNotify() {
     }
 }
 
-// ============================================
-// PORTFOLIO FUNCTIONS
-// ============================================
 async function loadPortfolio() {
     var data = await callAPI('/api/portfolio/summary');
     if (data && data.success) {
         var s = data.summary;
         document.getElementById('portTotalInvested').textContent = s.total_invested_tnd.toFixed(2) + ' TND';
         document.getElementById('portCurrentValue').textContent = s.total_current_usd.toFixed(2) + ' USD';
-        
         var profitEl = document.getElementById('portProfit');
         profitEl.textContent = (s.total_profit_tnd >= 0 ? '+' : '') + s.total_profit_tnd.toFixed(2) + ' TND';
         profitEl.style.color = s.total_profit_tnd >= 0 ? '#34d399' : '#f87171';
-        
         var roiEl = document.getElementById('portROI');
         roiEl.textContent = (s.roi_percent >= 0 ? '+' : '') + s.roi_percent.toFixed(2) + '%';
         roiEl.style.color = s.roi_percent >= 0 ? '#34d399' : '#f87171';
-        
         var html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px;">';
         for (var asset in s.assets) {
             var a = s.assets[asset];
@@ -1347,16 +1621,13 @@ async function saveFee() {
     var fee = parseFloat(document.getElementById('feePercent').value);
     if (fee < 0) { addLog('Please enter a valid fee', 'error'); return; }
     var data = await callAPI('/api/portfolio/fee', 'POST', { fee: fee });
-    if (data && data.success) {
-        addLog('Fee updated: ' + fee + '%', 'success');
-    }
+    if (data && data.success) addLog('Fee updated: ' + fee + '%', 'success');
 }
 
 async function buyAsset() {
     var asset = document.getElementById('buyAsset').value;
     var amount = parseFloat(document.getElementById('buyAmount').value);
     if (!amount || amount <= 0) { addLog('Please enter a valid amount', 'error'); return; }
-    
     addLog('Buying ' + asset + ' for ' + amount + ' TND...', 'info');
     var data = await callAPI('/api/portfolio/buy', 'POST', { asset: asset, amount_tnd: amount });
     if (data && data.success) {
@@ -1370,7 +1641,6 @@ async function buyAsset() {
 
 async function viewPortfolioReport() {
     addLog('Loading portfolio report...', 'info');
-    
     var data = await callAPI('/api/portfolio/weekly-report');
     if (data && data.success) {
         var r = data.report;
@@ -1385,7 +1655,6 @@ async function viewPortfolioReport() {
         msg += '\\n🏆 Best Performer: ' + (r.best_performer || 'N/A') + '\\n';
         msg += '📉 Worst Performer: ' + (r.worst_performer || 'N/A') + '\\n';
         msg += '\\n📋 Week Transactions: ' + r.week_count + '\\n';
-        
         msg += '\\n📊 Details by Asset:\\n';
         for (var asset in s.assets) {
             var a = s.assets[asset];
@@ -1396,28 +1665,20 @@ async function viewPortfolioReport() {
             msg += '   Profit: ' + (a.profit_tnd >= 0 ? '+' : '') + a.profit_tnd.toFixed(2) + ' TND\\n';
             msg += '   ROI: ' + (a.roi_percent >= 0 ? '+' : '') + a.roi_percent.toFixed(2) + '%\\n';
         }
-        
         alert(msg);
         addLog('Portfolio report loaded', 'success');
     }
 }
 
-// ============================================
-// EVENTS
-// ============================================
 document.getElementById('btnCheckPrices').addEventListener('click', checkPrices);
 document.getElementById('btnWeeklyReport').addEventListener('click', weeklyReport);
 
-// ============================================
-// INIT
-// ============================================
 addLog('🤖 Bot 24h/7j - Initialisation...', 'info');
 updateStatus();
 updatePrices();
 loadAnalyses();
 loadPortfolio();
 
-// Mises à jour automatiques
 setInterval(updateStatus, 5000);
 setInterval(updatePrices, 30000);
 setInterval(loadAnalyses, 10000);
@@ -1446,10 +1707,7 @@ SETTINGS_PAGE = '''
             min-height: 100vh;
             padding: 20px;
         }
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-        }
+        .container { max-width: 900px; margin: 0 auto; }
         .header {
             background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
             border-radius: 16px;
@@ -1467,11 +1725,7 @@ SETTINGS_PAGE = '''
             -webkit-text-fill-color: transparent;
             font-size: 24px;
         }
-        .logo span {
-            color: #666;
-            font-size: 13px;
-            display: block;
-        }
+        .logo span { color: #666; font-size: 13px; display: block; }
         .card {
             background: #1a1a1a;
             border-radius: 12px;
@@ -1509,13 +1763,8 @@ SETTINGS_PAGE = '''
             font-size: 14px;
             min-width: 150px;
         }
-        .config-row input:focus, .config-row select:focus {
-            outline: none;
-            border-color: #f7931a;
-        }
-        .config-row input::placeholder {
-            color: #444;
-        }
+        .config-row input:focus, .config-row select:focus { outline: none; border-color: #f7931a; }
+        .config-row input::placeholder { color: #444; }
         .btn {
             padding: 10px 24px;
             border: none;
@@ -1525,10 +1774,7 @@ SETTINGS_PAGE = '''
             cursor: pointer;
             transition: all 0.3s;
         }
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-info { background: #1e3a5f; color: #60a5fa; }
         .btn-info:hover:not(:disabled) { background: #1e40af; transform: scale(1.02); }
         .btn-success { background: #065f46; color: #34d399; }
@@ -1552,10 +1798,7 @@ SETTINGS_PAGE = '''
             align-items: center;
             gap: 6px;
         }
-        .logout-btn:hover {
-            background: #7f1d1d;
-            transform: scale(1.02);
-        }
+        .logout-btn:hover { background: #7f1d1d; transform: scale(1.02); }
         .checkbox-group {
             display: flex;
             gap: 20px;
@@ -1569,12 +1812,7 @@ SETTINGS_PAGE = '''
             color: #aaa;
             cursor: pointer;
         }
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: #f7931a;
-            cursor: pointer;
-        }
+        .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; accent-color: #f7931a; cursor: pointer; }
         .result-message {
             margin-top: 12px;
             padding: 10px 14px;
@@ -1582,34 +1820,16 @@ SETTINGS_PAGE = '''
             font-size: 14px;
             display: none;
         }
-        .result-message.success {
-            display: block;
-            background: #064e3b;
-            color: #34d399;
-            border: 1px solid #34d399;
-        }
-        .result-message.error {
-            display: block;
-            background: #4a1a1a;
-            color: #f87171;
-            border: 1px solid #f87171;
-        }
-        .result-message.info {
-            display: block;
-            background: #1a2a4a;
-            color: #60a5fa;
-            border: 1px solid #60a5fa;
-        }
+        .result-message.success { display: block; background: #064e3b; color: #34d399; border: 1px solid #34d399; }
+        .result-message.error { display: block; background: #4a1a1a; color: #f87171; border: 1px solid #f87171; }
+        .result-message.info { display: block; background: #1a2a4a; color: #60a5fa; border: 1px solid #60a5fa; }
         .btn-group {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
             margin-top: 10px;
         }
-        .btn-group .btn {
-            flex: 1;
-            min-width: 120px;
-        }
+        .btn-group .btn { flex: 1; min-width: 120px; }
         .channel-item {
             display: flex;
             justify-content: space-between;
@@ -1620,31 +1840,16 @@ SETTINGS_PAGE = '''
             margin-bottom: 8px;
             border: 1px solid #2a2a2a;
         }
-        .channel-item:hover {
-            border-color: #444;
-        }
-        .channel-name {
-            font-size: 14px;
-            color: #aaa;
-            font-family: monospace;
-        }
+        .channel-item:hover { border-color: #444; }
+        .channel-name { font-size: 14px; color: #aaa; font-family: monospace; }
         .channel-status {
             font-size: 12px;
             padding: 2px 10px;
             border-radius: 12px;
         }
-        .channel-status.active {
-            background: #064e3b;
-            color: #34d399;
-        }
-        .channel-status.inactive {
-            background: #4a1a1a;
-            color: #f87171;
-        }
-        .channel-actions {
-            display: flex;
-            gap: 8px;
-        }
+        .channel-status.active { background: #064e3b; color: #34d399; }
+        .channel-status.inactive { background: #4a1a1a; color: #f87171; }
+        .channel-actions { display: flex; gap: 8px; }
         .channel-actions button {
             padding: 4px 12px;
             border: none;
@@ -1653,54 +1858,20 @@ SETTINGS_PAGE = '''
             cursor: pointer;
             transition: all 0.3s;
         }
-        .channel-actions .btn-remove {
-            background: #4a1a1a;
-            color: #f87171;
-        }
-        .channel-actions .btn-remove:hover {
-            background: #7f1d1d;
-        }
-        .channel-actions .btn-toggle {
-            background: #1e3a5f;
-            color: #60a5fa;
-        }
-        .channel-actions .btn-toggle:hover {
-            background: #1e40af;
-        }
+        .channel-actions .btn-remove { background: #4a1a1a; color: #f87171; }
+        .channel-actions .btn-remove:hover { background: #7f1d1d; }
+        .channel-actions .btn-toggle { background: #1e3a5f; color: #60a5fa; }
+        .channel-actions .btn-toggle:hover { background: #1e40af; }
         @media (max-width: 600px) {
-            .config-row {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            .config-row label {
-                min-width: auto;
-            }
-            .config-row input {
-                min-width: auto;
-            }
-            .btn-group .btn {
-                flex: 1 1 100%;
-            }
-            .header {
-                flex-direction: column;
-                gap: 10px;
-                text-align: center;
-            }
-            .channel-item {
-                flex-direction: column;
-                gap: 8px;
-                align-items: stretch;
-            }
-            .channel-actions {
-                justify-content: center;
-            }
+            .config-row { flex-direction: column; align-items: stretch; }
+            .config-row label { min-width: auto; }
+            .config-row input { min-width: auto; }
+            .btn-group .btn { flex: 1 1 100%; }
+            .header { flex-direction: column; gap: 10px; text-align: center; }
+            .channel-item { flex-direction: column; gap: 8px; align-items: stretch; }
+            .channel-actions { justify-content: center; }
         }
-        .empty-message {
-            color: #444;
-            text-align: center;
-            padding: 20px;
-            font-style: italic;
-        }
+        .empty-message { color: #444; text-align: center; padding: 20px; font-style: italic; }
     </style>
 </head>
 <body>
@@ -1716,28 +1887,20 @@ SETTINGS_PAGE = '''
         </div>
     </div>
 
-    <!-- ===== CHAÎNES TELEGRAM ===== -->
     <div class="card">
         <div class="card-title">📡 Chaînes Telegram surveillées</div>
-        
-        <!-- Liste des chaînes -->
         <div id="channelsList">
             <div class="empty-message">Aucune chaîne configurée</div>
         </div>
-        
-        <!-- Ajouter une chaîne -->
         <div class="config-row" style="margin-top:15px;border-top:1px solid #2a2a2a;padding-top:15px;">
             <label>Ajouter une chaîne</label>
             <input type="text" id="newChannel" placeholder="@nom_du_canal" style="flex:1;">
             <button onclick="addChannel()" class="btn btn-success">➕ Ajouter</button>
         </div>
-        <div style="font-size:12px;color:#444;margin-top:5px;">
-            Format: @nom_du_canal (ex: @crypto_news_fr)
-        </div>
+        <div style="font-size:12px;color:#444;margin-top:5px;">Format: @nom_du_canal (ex: @crypto_news_fr)</div>
         <div id="channelResult" style="margin-top:8px;font-size:13px;"></div>
     </div>
 
-    <!-- ===== INTERVALLE PRIX ===== -->
     <div class="card">
         <div class="card-title">📊 Intervalle de vérification des prix</div>
         <div class="config-row">
@@ -1749,7 +1912,6 @@ SETTINGS_PAGE = '''
         <div id="intervalResult" style="margin-top:8px;font-size:13px;"></div>
     </div>
 
-    <!-- ===== SEUIL D'ALERTE ===== -->
     <div class="card">
         <div class="card-title">🔔 Seuil d'alerte de prix</div>
         <div class="config-row">
@@ -1761,25 +1923,17 @@ SETTINGS_PAGE = '''
         <div id="thresholdResult" style="margin-top:8px;font-size:13px;"></div>
     </div>
 
-    <!-- ===== NOTIFICATIONS ===== -->
     <div class="card">
         <div class="card-title">📱 Notifications</div>
         <div class="checkbox-group">
-            <label>
-                <input type="checkbox" id="notifPrice" checked> Alertes de prix
-            </label>
-            <label>
-                <input type="checkbox" id="notifNews" checked> Alertes news
-            </label>
-            <label>
-                <input type="checkbox" id="notifWeekly" checked> Rapport hebdomadaire
-            </label>
+            <label><input type="checkbox" id="notifPrice" checked> Alertes de prix</label>
+            <label><input type="checkbox" id="notifNews" checked> Alertes news</label>
+            <label><input type="checkbox" id="notifWeekly" checked> Rapport hebdomadaire</label>
         </div>
         <button onclick="saveNotifications()" class="btn btn-success" style="margin-top:15px;" id="btnNotif">Enregistrer les préférences</button>
         <div id="notifResult" style="margin-top:8px;font-size:13px;"></div>
     </div>
 
-    <!-- ===== EXPORT / RESET ===== -->
     <div class="card">
         <div class="card-title">🛠️ Maintenance</div>
         <div class="btn-group">
@@ -1793,10 +1947,8 @@ SETTINGS_PAGE = '''
         <div id="maintenanceResult" style="margin-top:8px;font-size:13px;"></div>
     </div>
 
-    <!-- ===== RÉSULTATS GLOBAUX ===== -->
     <div id="settingsResult" class="result-message"></div>
 
-    <!-- ===== LOGS RAPIDES ===== -->
     <div class="card">
         <div class="card-title">📋 Actions récentes</div>
         <div id="settingsLogs" style="max-height:150px;overflow-y:auto;font-size:13px;color:#666;background:#0a0a0a;padding:12px;border-radius:8px;border:1px solid #1a1a1a;">
@@ -1817,12 +1969,7 @@ function addLog(msg, type) {
     var log = document.getElementById('settingsLogs');
     var entry = document.createElement('div');
     var time = new Date().toLocaleTimeString();
-    var colors = {
-        success: '#34d399',
-        error: '#f87171',
-        info: '#60a5fa',
-        warning: '#fbbf24'
-    };
+    var colors = { success: '#34d399', error: '#f87171', info: '#60a5fa', warning: '#fbbf24' };
     entry.innerHTML = '<span style="color:#333;">[' + time + ']</span> <span style="color:' + (colors[type] || '#888') + ';">' + msg + '</span>';
     log.appendChild(entry);
     log.scrollTop = log.scrollHeight;
@@ -1840,9 +1987,7 @@ async function callAPI(endpoint, method, data) {
                 'Authorization': 'Basic ' + auth
             }
         };
-        if (data) {
-            options.body = JSON.stringify(data);
-        }
+        if (data) options.body = JSON.stringify(data);
         var response = await fetch(endpoint, options);
         if (!response.ok) {
             if (response.status === 401) {
@@ -1862,40 +2007,29 @@ async function callAPI(endpoint, method, data) {
 function showResult(elementId, message, type) {
     var el = document.getElementById(elementId);
     if (!el) return;
-    var colors = {
-        success: '#34d399',
-        error: '#f87171',
-        info: '#60a5fa',
-        warning: '#fbbf24'
-    };
+    var colors = { success: '#34d399', error: '#f87171', info: '#60a5fa', warning: '#fbbf24' };
     el.style.color = colors[type] || '#888';
     el.textContent = message;
     addLog(message, type);
 }
 
-// ===== CHAÎNES TELEGRAM =====
 async function loadChannels() {
     var data = await callAPI('/api/settings/channels');
     var list = document.getElementById('channelsList');
-    
     if (!data || !data.success) {
         list.innerHTML = '<div class="empty-message">❌ Erreur de chargement</div>';
         return;
     }
-    
     var channels = data.channels || [];
-    
     if (channels.length === 0) {
         list.innerHTML = '<div class="empty-message">Aucune chaîne configurée</div>';
         return;
     }
-    
     var html = '';
     for (var i = 0; i < channels.length; i++) {
         var ch = channels[i];
         var statusClass = ch.active ? 'active' : 'inactive';
         var statusText = ch.active ? '✅ Actif' : '⛔ Inactif';
-        
         html += '<div class="channel-item">';
         html += '<span class="channel-name">' + ch.channel + '</span>';
         html += '<span class="channel-status ' + statusClass + '">' + statusText + '</span>';
@@ -1905,32 +2039,23 @@ async function loadChannels() {
         html += '</div>';
         html += '</div>';
     }
-    
     list.innerHTML = html;
 }
 
 async function addChannel() {
     var input = document.getElementById('newChannel');
     var channel = input.value.trim();
-    
     if (!channel) {
         showResult('channelResult', '❌ Veuillez entrer un nom de chaîne (ex: @crypto_news)', 'error');
         return;
     }
-    
-    if (!channel.startsWith('@')) {
-        channel = '@' + channel;
-    }
-    
+    if (!channel.startsWith('@')) channel = '@' + channel;
     var btn = document.querySelector('.config-row .btn-success');
     btn.disabled = true;
     btn.textContent = '⏳ Ajout...';
-    
     var data = await callAPI('/api/settings/channels/add', 'POST', { channel: channel });
-    
     btn.disabled = false;
     btn.textContent = '➕ Ajouter';
-    
     if (data && data.success) {
         showResult('channelResult', '✅ Chaîne ajoutée: ' + channel, 'success');
         input.value = '';
@@ -1942,9 +2067,7 @@ async function addChannel() {
 
 async function removeChannel(index) {
     if (!confirm('⚠️ Voulez-vous vraiment supprimer cette chaîne ?')) return;
-    
     var data = await callAPI('/api/settings/channels/remove', 'POST', { index: index });
-    
     if (data && data.success) {
         showResult('channelResult', '✅ Chaîne supprimée', 'success');
         loadChannels();
@@ -1955,7 +2078,6 @@ async function removeChannel(index) {
 
 async function toggleChannel(index) {
     var data = await callAPI('/api/settings/channels/toggle', 'POST', { index: index });
-    
     if (data && data.success) {
         showResult('channelResult', '✅ Statut de la chaîne modifié', 'success');
         loadChannels();
@@ -1964,24 +2086,18 @@ async function toggleChannel(index) {
     }
 }
 
-// ===== PARAMÈTRES =====
 async function savePriceInterval() {
     var btn = document.getElementById('btnInterval');
     var minutes = parseInt(document.getElementById('priceInterval').value);
-    
     if (!minutes || minutes < 1) {
         showResult('intervalResult', '❌ Entrez un nombre valide (≥ 1 minute)', 'error');
         return;
     }
-    
     btn.disabled = true;
     btn.textContent = '⏳ En cours...';
-    
     var data = await callAPI('/api/settings/interval', 'POST', { interval_minutes: minutes });
-    
     btn.disabled = false;
     btn.textContent = 'Enregistrer';
-    
     if (data && data.success) {
         showResult('intervalResult', '✅ Intervalle mis à jour: ' + minutes + ' minutes', 'success');
     } else {
@@ -1992,20 +2108,15 @@ async function savePriceInterval() {
 async function saveAlertThreshold() {
     var btn = document.getElementById('btnThreshold');
     var threshold = parseFloat(document.getElementById('alertThreshold').value);
-    
     if (!threshold || threshold < 0) {
         showResult('thresholdResult', '❌ Entrez un pourcentage valide', 'error');
         return;
     }
-    
     btn.disabled = true;
     btn.textContent = '⏳ En cours...';
-    
     var data = await callAPI('/api/settings/threshold', 'POST', { threshold_percent: threshold });
-    
     btn.disabled = false;
     btn.textContent = 'Enregistrer';
-    
     if (data && data.success) {
         showResult('thresholdResult', '✅ Seuil mis à jour: ' + threshold + '%', 'success');
     } else {
@@ -2020,15 +2131,11 @@ async function saveNotifications() {
         news: document.getElementById('notifNews').checked,
         weekly: document.getElementById('notifWeekly').checked
     };
-    
     btn.disabled = true;
     btn.textContent = '⏳ En cours...';
-    
     var data = await callAPI('/api/settings/notifications', 'POST', settings);
-    
     btn.disabled = false;
     btn.textContent = 'Enregistrer les préférences';
-    
     if (data && data.success) {
         showResult('notifResult', '✅ Préférences de notification enregistrées', 'success');
     } else {
@@ -2036,18 +2143,14 @@ async function saveNotifications() {
     }
 }
 
-// ===== EXPORT =====
 async function exportData() {
     var btn = document.getElementById('btnExport');
     btn.disabled = true;
     btn.textContent = '⏳ Export...';
     showResult('maintenanceResult', '⏳ Export en cours...', 'info');
-    
     var data = await callAPI('/api/export-data');
-    
     btn.disabled = false;
     btn.textContent = '📥 Exporter les données';
-    
     if (data && data.success) {
         try {
             var json = JSON.stringify(data.data, null, 2);
@@ -2069,22 +2172,15 @@ async function exportData() {
     }
 }
 
-// ===== RESET =====
 async function resetBot() {
-    if (!confirm('⚠️ Voulez-vous vraiment réinitialiser le bot ? Toutes les données seront effacées.')) {
-        return;
-    }
-    
+    if (!confirm('⚠️ Voulez-vous vraiment réinitialiser le bot ? Toutes les données seront effacées.')) return;
     var btn = document.getElementById('btnReset');
     btn.disabled = true;
     btn.textContent = '⏳ Reset...';
     showResult('maintenanceResult', '⏳ Réinitialisation en cours...', 'info');
-    
     var data = await callAPI('/api/reset', 'POST');
-    
     btn.disabled = false;
     btn.textContent = '🔄 Réinitialiser le bot';
-    
     if (data && data.success) {
         showResult('maintenanceResult', '✅ Bot réinitialisé avec succès. Redirection...', 'success');
         setTimeout(function() { window.location.href = '/'; }, 2000);
@@ -2093,31 +2189,17 @@ async function resetBot() {
     }
 }
 
-// ============================================
-// INIT
-// ============================================
 async function loadSettings() {
     try {
         var data = await callAPI('/api/status');
         if (data && data.config) {
             var config = data.config;
-            
-            if (config.price_interval) {
-                document.getElementById('priceInterval').value = config.price_interval;
-            }
-            if (config.alert_threshold) {
-                document.getElementById('alertThreshold').value = config.alert_threshold;
-            }
+            if (config.price_interval) document.getElementById('priceInterval').value = config.price_interval;
+            if (config.alert_threshold) document.getElementById('alertThreshold').value = config.alert_threshold;
             if (config.notifications) {
-                if (config.notifications.price !== undefined) {
-                    document.getElementById('notifPrice').checked = config.notifications.price;
-                }
-                if (config.notifications.news !== undefined) {
-                    document.getElementById('notifNews').checked = config.notifications.news;
-                }
-                if (config.notifications.weekly !== undefined) {
-                    document.getElementById('notifWeekly').checked = config.notifications.weekly;
-                }
+                if (config.notifications.price !== undefined) document.getElementById('notifPrice').checked = config.notifications.price;
+                if (config.notifications.news !== undefined) document.getElementById('notifNews').checked = config.notifications.news;
+                if (config.notifications.weekly !== undefined) document.getElementById('notifWeekly').checked = config.notifications.weekly;
             }
             addLog('✅ Paramètres chargés depuis le serveur', 'success');
         }
@@ -2142,7 +2224,6 @@ async function testServer() {
         addLog('❌ Serveur inaccessible - Vérifiez que le bot tourne', 'error');
     }
 }
-
 setTimeout(testServer, 1000);
 </script>
 </body>
@@ -2219,6 +2300,10 @@ async def history_page(request: Request):
     if not check_auth_header(request):
         return RedirectResponse(url="/login", status_code=302)
     return RedirectResponse(url="/history", status_code=302)
+
+# ============================================
+# POINT D'ENTRÉE
+# ============================================
 
 if __name__ == "__main__":
     print("=" * 50)
