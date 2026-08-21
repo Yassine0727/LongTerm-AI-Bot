@@ -224,7 +224,10 @@ LOGIN_PAGE = '''
             
             if (username === "admin" && password === "admin123") {
                 var auth = btoa(username + ':' + password);
-                window.location.href = '/?auth=' + auth;
+                // Stocker dans localStorage
+                localStorage.setItem('auth', auth);
+                // Rediriger
+                window.location.href = '/';
             } else {
                 document.getElementById('error').classList.add('show');
             }
@@ -671,11 +674,23 @@ MAIN_PAGE = '''
 
 <script>
 // ============================================
+// AUTHENTIFICATION VIA LOCALSTORAGE
+// ============================================
+function getAuth() {
+    var auth = localStorage.getItem('auth');
+    if (!auth) {
+        // Fallback vers les identifiants par défaut
+        auth = btoa('admin:admin123');
+    }
+    return auth;
+}
+
+// ============================================
 // LOGOUT
 // ============================================
 function logout() {
     if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
-        document.cookie = 'auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        localStorage.removeItem('auth');
         window.location.href = '/login';
     }
 }
@@ -702,12 +717,12 @@ function clearLogs() {
 }
 
 // ============================================
-// API CALLS
+// API CALLS AVEC LOCALSTORAGE
 // ============================================
 async function callAPI(endpoint, method, data) {
     method = method || 'GET';
     try {
-        var auth = btoa('admin:admin123');
+        var auth = getAuth();
         var options = {
             method: method,
             headers: {
@@ -722,6 +737,7 @@ async function callAPI(endpoint, method, data) {
         if (!response.ok) {
             if (response.status === 401) {
                 addLog('⚠️ Session expirée, veuillez vous reconnecter', 'warning');
+                localStorage.removeItem('auth');
                 window.location.href = '/login';
                 return null;
             }
@@ -1474,7 +1490,7 @@ SETTINGS_PAGE = '''
 <script>
 function logout() {
     if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
-        document.cookie = 'auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        localStorage.removeItem('auth');
         window.location.href = '/login';
     }
 }
@@ -1498,7 +1514,7 @@ function addLog(msg, type) {
 async function callAPI(endpoint, method, data) {
     method = method || 'GET';
     try {
-        var auth = btoa('admin:admin123');
+        var auth = localStorage.getItem('auth') || btoa('admin:admin123');
         var options = {
             method: method,
             headers: {
@@ -1513,6 +1529,7 @@ async function callAPI(endpoint, method, data) {
         if (!response.ok) {
             if (response.status === 401) {
                 addLog('⚠️ Session expirée', 'warning');
+                localStorage.removeItem('auth');
                 window.location.href = '/login';
                 return null;
             }
