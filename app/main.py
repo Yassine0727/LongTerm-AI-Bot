@@ -10,6 +10,7 @@ import asyncio
 import threading
 import secrets
 import base64
+from datetime import datetime
 
 from app.api.routes import router
 from app.history_page import router as history_router
@@ -49,6 +50,13 @@ SECRET_KEY = "votre_cle_secrete_tres_longue_et_aleatoire"
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Middleware pour protéger toutes les routes API"""
+    
+    # Routes publiques (sans authentification)
+    public_routes = ["/api/ping"]
+    
+    if request.url.path in public_routes:
+        return await call_next(request)
+    
     if not request.url.path.startswith("/api/"):
         return await call_next(request)
     
@@ -101,6 +109,17 @@ def check_auth_header(request: Request):
         return username == ADMIN_USERNAME and password == ADMIN_PASSWORD
     except:
         return False
+
+# ===== ROUTE PUBLIQUE POUR UPTIME ROBOT =====
+@app.get("/api/ping")
+async def ping():
+    """Route publique pour les services de monitoring (Uptime Robot)"""
+    return {
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "version": "3.0",
+        "message": "LongTerm AI Bot is alive!"
+    }
 
 # ===== PAGE DE CONNEXION =====
 LOGIN_PAGE = '''
