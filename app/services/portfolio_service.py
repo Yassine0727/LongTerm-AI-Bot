@@ -53,23 +53,92 @@ class PortfolioService:
         try:
             import httpx
             with httpx.Client(timeout=10.0) as client:
-                if asset in ["BTC", "ETH"]:
-                    response = client.get(
-                        f"https://api.binance.com/api/v3/ticker/price",
-                        params={"symbol": f"{asset}USDT"}
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        return float(data["price"])
+                if asset == "BTC":
+                    # Kraken d'abord
+                    try:
+                        response = client.get("https://api.kraken.com/0/public/Ticker?pair=XBTUSD")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["result"]["XXBTZUSD"]["c"][0])
+                    except Exception as e:
+                        logger.warning(f"⚠️ Kraken BTC échoué: {e}")
+                    
+                    # Fallback CoinCap
+                    try:
+                        response = client.get("https://api.coincap.io/v2/assets/bitcoin")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["data"]["priceUsd"])
+                    except Exception as e:
+                        logger.warning(f"⚠️ CoinCap BTC échoué: {e}")
+                    
+                    # Fallback CoinGecko
+                    try:
+                        response = client.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["bitcoin"]["usd"])
+                    except Exception as e:
+                        logger.warning(f"⚠️ CoinGecko BTC échoué: {e}")
+                    
+                elif asset == "ETH":
+                    # Kraken d'abord
+                    try:
+                        response = client.get("https://api.kraken.com/0/public/Ticker?pair=ETHUSD")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["result"]["XETHZUSD"]["c"][0])
+                    except Exception as e:
+                        logger.warning(f"⚠️ Kraken ETH échoué: {e}")
+                    
+                    # Fallback CoinCap
+                    try:
+                        response = client.get("https://api.coincap.io/v2/assets/ethereum")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["data"]["priceUsd"])
+                    except Exception as e:
+                        logger.warning(f"⚠️ CoinCap ETH échoué: {e}")
+                    
+                    # Fallback CoinGecko
+                    try:
+                        response = client.get("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["ethereum"]["usd"])
+                    except Exception as e:
+                        logger.warning(f"⚠️ CoinGecko ETH échoué: {e}")
+                    
                 elif asset == "GOLD":
-                    response = client.get("https://api.gold-api.com/price/XAU")
-                    if response.status_code == 200:
-                        data = response.json()
-                        return float(data.get("price", 0))
-            return 0
+                    # Gold-API
+                    try:
+                        response = client.get("https://api.gold-api.com/price/XAU")
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data.get("price", 0))
+                    except Exception as e:
+                        logger.warning(f"⚠️ Gold-API échoué: {e}")
+                    
+                    # Fallback Binance XAUUSDT
+                    try:
+                        response = client.get(
+                            "https://api.binance.com/api/v3/ticker/price",
+                            params={"symbol": "XAUTUSDT"}
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            return float(data["price"])
+                    except Exception as e:
+                        logger.warning(f"⚠️ Binance XAUUSDT échoué: {e}")
+                
+                # Dernier fallback
+                fallback = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
+                return fallback.get(asset, 0)
+                
         except Exception as e:
-            logger.error(f"Erreur prix {asset}: {e}")
-            return 0
+            logger.error(f"❌ Erreur prix {asset}: {e}")
+            fallback = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
+            return fallback.get(asset, 0)
     
     def add_transaction(self, asset: str, amount_tnd: float, fee_percent: float = None) -> Dict:
         """
@@ -166,6 +235,12 @@ class PortfolioService:
         for asset, h in holdings.items():
             # Obtenir le prix actuel (synchrone)
             current_price = self._get_price_sync(asset)
+            
+            # Si le prix est 0, utiliser un fallback
+            if current_price == 0:
+                fallback = {"BTC": 65000, "ETH": 3500, "GOLD": 2400}
+                current_price = fallback.get(asset, 0)
+                logger.warning(f"⚠️ Utilisation du prix fallback pour {asset}: ${current_price}")
             
             current_value_usd = h["total_quantity"] * current_price
             profit_usd = current_value_usd - h["total_invested_usd"]
