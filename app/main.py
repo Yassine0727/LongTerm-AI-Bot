@@ -10,6 +10,7 @@ import asyncio
 import threading
 import secrets
 import base64
+import json
 from datetime import datetime
 
 from app.api.routes import router
@@ -123,6 +124,326 @@ async def ping(request: Request):
         "message": "LongTerm AI Bot is alive!"
     }
 
+# ============================================
+# CONFIGURATION ET RECHARGEMENT
+# ============================================
+
+CONFIG_FILE = "config.json"
+
+def load_config():
+    """Charge la configuration depuis config.json"""
+    default_config = {
+        "price_interval": 30,
+        "alert_threshold": 5,
+        "telegram_channels": [],
+        "notifications": {
+            "price": True,
+            "news": True,
+            "weekly": True
+        }
+    }
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                # Fusionner avec les valeurs par défaut
+                for key in default_config:
+                    if key not in config:
+                        config[key] = default_config[key]
+                return config
+        except Exception as e:
+            logger.error(f"❌ Erreur lecture config.json: {e}")
+            return default_config
+    
+    return default_config
+
+def save_config(config):
+    """Sauvegarde la configuration dans config.json"""
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Erreur sauvegarde config.json: {e}")
+        return False
+
+# Charger la config au démarrage
+config_data = load_config()
+
+# ===== ROUTE DE RECHARGEMENT =====
+
+@app.post("/api/reload")
+async def reload_bot():
+    """Recharge le bot et ses configurations"""
+    try:
+        logger.info("🔄 Rechargement du bot...")
+        
+        # 1. Recharger la configuration
+        global config_data
+        config_data = load_config()
+        
+        # 2. Mettre à jour le statut
+        await update_bot_status()
+        
+        logger.info("✅ Bot rechargé avec succès")
+        return {
+            "success": True,
+            "message": "Bot rechargé avec succès",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du rechargement: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Erreur lors du rechargement"
+        }
+
+# ===== ROUTES DE PARAMÈTRES =====
+
+@app.post("/api/settings/interval")
+async def save_interval(data: dict):
+    """Sauvegarde l'intervalle de vérification des prix"""
+    try:
+        interval = data.get("interval_minutes")
+        if not interval or interval < 1:
+            return {"success": False, "error": "Intervalle invalide"}
+        
+        config = load_config()
+        config["price_interval"] = interval
+        save_config(config)
+        
+        logger.info(f"✅ Intervalle mis à jour: {interval} minutes")
+        return {"success": True, "message": f"Intervalle mis à jour: {interval} minutes"}
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/settings/threshold")
+async def save_threshold(data: dict):
+    """Sauvegarde le seuil d'alerte"""
+    try:
+        threshold = data.get("threshold_percent")
+        if threshold is None or threshold < 0:
+            return {"success": False, "error": "Seuil invalide"}
+        
+        config = load_config()
+        config["alert_threshold"] = threshold
+        save_config(config)
+        
+        logger.info(f"✅ Seuil mis à jour: {threshold}%")
+        return {"success": True, "message": f"Seuil mis à jour: {threshold}%"}
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/settings/notifications")
+async def save_notifications(data: dict):
+    """Sauvegarde les préférences de notification"""
+    try:
+        config = load_config()
+        config["notifications"] = {
+            "price": data.get("price", True),
+            "news": data.get("news", True),
+            "weekly": data.get("weekly", True)
+        }
+        save_config(config)
+        
+        logger.info("✅ Préférences de notification enregistrées")
+        return {"success": True, "message": "Préférences de notification enregistrées"}
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/settings/channels")
+async def get_channels():
+    """Récupère la liste des canaux"""
+    try:
+        config = load_config()
+        channels = config.get("telegram_channels", [])
+        return {"success": True, "channels": channels}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/settings/channels/add")
+async def add_channel(data: dict):
+    """Ajoute un canal à la liste"""
+    try:
+        channel = data.get("channel", "").strip()
+        if not channel:
+            return {"success": False, "error": "Canal invalide"}
+        
+        config = load_config()
+        channels = config.get("telegram_channels", [])
+        
+        # Vérifier si le canal existe déjà
+        for ch in channels:
+            if ch.get("channel") == channel:
+                return {"success": False, "error": "Ce canal existe déjà"}
+        
+        channels.append({"channel": channel, "active": True})
+        config["telegram_channels"] = channels
+        save_config(config)
+        
+        logger.info(f"✅ Canal ajouté: {channel}")
+        return {"success": True, "message": f"Canal ajouté: {channel}"}
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/settings/channels/remove")
+async def remove_channel(data: dict):
+    """Supprime un canal de la liste"""
+    try:
+        index = data.get("index")
+        if index is None:
+            return {"success": False, "error": "Index invalide"}
+        
+        config = load_config()
+        channels = config.get("telegram_channels", [])
+        
+        if 0 <= index < len(channels):
+            removed = channels.pop(index)
+            config["telegram_channels"] = channels
+            save_config(config)
+            
+            logger.info(f"✅ Canal supprimé: {removed.get('channel')}")
+            return {"success": True, "message": f"Canal {removed.get('channel')} supprimé"}
+        else:
+            return {"success": False, "error": "Index hors limites"}
+            
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/settings/channels/toggle")
+async def toggle_channel(data: dict):
+    """Active/désactive un canal"""
+    try:
+        index = data.get("index")
+        if index is None:
+            return {"success": False, "error": "Index invalide"}
+        
+        config = load_config()
+        channels = config.get("telegram_channels", [])
+        
+        if 0 <= index < len(channels):
+            channels[index]["active"] = not channels[index].get("active", True)
+            config["telegram_channels"] = channels
+            save_config(config)
+            
+            logger.info(f"✅ Statut du canal modifié")
+            return {"success": True, "message": "Statut du canal modifié"}
+        else:
+            return {"success": False, "error": "Index hors limites"}
+            
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+# ===== ROUTE DE STATUT AMÉLIORÉE =====
+
+async def update_bot_status():
+    """Met à jour le statut du bot"""
+    try:
+        logger.info("📊 Mise à jour du statut...")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Erreur mise à jour statut: {e}")
+        return False
+
+@app.get("/api/status")
+async def get_status():
+    """Retourne le statut complet du bot"""
+    try:
+        config = load_config()
+        
+        status = {
+            "running": True,
+            "config": {
+                "price_interval": config.get("price_interval", 30),
+                "alert_threshold": config.get("alert_threshold", 5),
+                "notifications": config.get("notifications", {
+                    "price": True,
+                    "news": True,
+                    "weekly": True
+                })
+            },
+            "stats": {
+                "total_analyzed": 0,
+                "last_update": datetime.now().isoformat()
+            }
+        }
+        
+        return status
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur statut: {e}")
+        return {
+            "running": True,
+            "error": str(e)
+        }
+
+# ===== ROUTE D'EXPORT =====
+
+@app.post("/api/export-data")
+async def export_data():
+    """Exporte toutes les données"""
+    try:
+        config = load_config()
+        
+        data = {
+            "config": config,
+            "timestamp": datetime.now().isoformat(),
+            "version": "3.0"
+        }
+        
+        return {"success": True, "data": data}
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur export: {e}")
+        return {"success": False, "error": str(e)}
+
+# ===== ROUTE DE RESET =====
+
+@app.post("/api/reset")
+async def reset_bot():
+    """Réinitialise le bot"""
+    try:
+        # Réinitialiser la configuration
+        default_config = {
+            "price_interval": 30,
+            "alert_threshold": 5,
+            "telegram_channels": [],
+            "notifications": {
+                "price": True,
+                "news": True,
+                "weekly": True
+            }
+        }
+        save_config(default_config)
+        
+        logger.info("✅ Bot réinitialisé")
+        return {
+            "success": True,
+            "message": "Bot réinitialisé avec succès",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur reset: {e}")
+        return {"success": False, "error": str(e)}
+
+# ============================================
+# PAGES HTML
+# ============================================
+
 # ===== PAGE DE CONNEXION =====
 LOGIN_PAGE = '''
 <!DOCTYPE html>
@@ -224,9 +545,7 @@ LOGIN_PAGE = '''
             
             if (username === "admin" && password === "admin123") {
                 var auth = btoa(username + ':' + password);
-                // Stocker dans localStorage
                 localStorage.setItem('auth', auth);
-                // Rediriger
                 window.location.href = '/';
             } else {
                 document.getElementById('error').classList.add('show');
@@ -679,7 +998,6 @@ MAIN_PAGE = '''
 function getAuth() {
     var auth = localStorage.getItem('auth');
     if (!auth) {
-        // Fallback vers les identifiants par défaut
         auth = btoa('admin:admin123');
     }
     return auth;
