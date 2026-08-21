@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import uvicorn
 import logging
@@ -111,9 +111,11 @@ def check_auth_header(request: Request):
         return False
 
 # ===== ROUTE PUBLIQUE POUR UPTIME ROBOT =====
-@app.get("/api/ping")
-async def ping():
+@app.api_route("/api/ping", methods=["GET", "HEAD"])
+async def ping(request: Request):
     """Route publique pour les services de monitoring (Uptime Robot)"""
+    if request.method == "HEAD":
+        return Response(status_code=200)
     return {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
