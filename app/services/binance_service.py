@@ -121,7 +121,6 @@ class BinanceService:
                             gold_data["price"] = float(data["lastPrice"])
                             gold_data["change_24h"] = float(data["priceChangePercent"])
                             logger.info(f"📊 GOLD: ${gold_data['price']:,.2f} (via Binance XAUUSDT)")
-                        # Récupérer le volume depuis Binance
                         gold_data["volume"] = float(data.get("volume", 0))
                         logger.info(f"📊 GOLD Volume: {gold_data['volume']:,.0f}")
                 except Exception as e:
@@ -147,14 +146,14 @@ class BinanceService:
         if symbol == "BTC":
             return [
                 ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=XBTUSD", self._parse_kraken_btc),
-                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko),
-                ("CoinCap", "https://api.coincap.io/v2/assets/bitcoin", self._parse_coincap)
+                ("CoinCap", "https://api.coincap.io/v2/assets/bitcoin", self._parse_coincap),
+                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko)
             ]
         elif symbol == "ETH":
             return [
                 ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=ETHUSD", self._parse_kraken_eth),
-                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko),
-                ("CoinCap", "https://api.coincap.io/v2/assets/ethereum", self._parse_coincap)
+                ("CoinCap", "https://api.coincap.io/v2/assets/ethereum", self._parse_coincap),
+                ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true", self._parse_coingecko)
             ]
         return []
     
