@@ -234,7 +234,7 @@ LOGIN_PAGE = '''
 </html>
 '''
 
-# ===== PAGE PRINCIPALE (24h/7j sans START/STOP) =====
+# ===== PAGE PRINCIPALE =====
 MAIN_PAGE = '''
 <!DOCTYPE html>
 <html lang="fr">
@@ -1835,7 +1835,14 @@ async def home(request: Request):
             username, password = decoded.split(":")
             if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
                 response = HTMLResponse(MAIN_PAGE)
-                response.set_cookie(key="auth", value=auth_param, max_age=86400)
+                response.set_cookie(
+                    key="auth",
+                    value=auth_param,
+                    max_age=86400,
+                    path="/",
+                    httponly=False,
+                    samesite="lax"
+                )
                 return response
         except:
             pass
