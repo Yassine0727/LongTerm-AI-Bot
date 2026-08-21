@@ -4,17 +4,26 @@
   "transactions": [
     {
       "id": 1,
-      "date": "2025-03-19",
-      "actif": "BTC",
-      "type": "achat",
-      "montant_dt": 400,
-      "prix_usd": 77556.03,
-      "taux_dt_usd": 3.25,
-      "quantite": 0.001587,
-      "prix_achat_dt": 252057.10
+      "timestamp": "2025-03-19T00:00:00",
+      "date": "19/03/2025",
+      "time": "00:00:00",
+      "asset": "BTC",
+      "amount_tnd": 400,
+      "amount_usd": 123.08,
+      "fee_percent": 0,
+      "fee_amount_usd": 0,
+      "amount_usd_after_fee": 123.08,
+      "price_usd": 77556.03,
+      "quantity": 0.001587,
+      "status": "active"
     }
   ],
   "holdings": {
-    "BTC": 0.001587
+    "BTC": {
+      "total_quantity": 0.001587,
+      "total_invested_usd": 123.08,
+      "total_invested_tnd": 400,
+      "transactions": [1]
+    }
   }
 }
