@@ -423,6 +423,7 @@ async def startup_event():
     else:
         logger.error("❌ ÉCHEC DU DÉMARRAGE TELEGRAM")
         logger.error("   Vérifiez que config.json contient des canaux valides")
+        logger.info("   Allez sur /telegram-login pour vous connecter")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1634,4 +1635,689 @@ async function buyAsset() {
         addLog(data.message, 'success');
         loadPortfolio();
         document.getElementById('buyAmount').value = '';
+    } else {
+        addLog('Error: ' + (data && data.error ? data.error : 'Unknown'), 'error');
     }
+}
+
+async function viewPortfolioReport() {
+    addLog('Loading portfolio report...', 'info');
+    var data = await callAPI('/api/portfolio/weekly-report');
+    if (data && data.success) {
+        var r = data.report;
+        var s = r.summary;
+        var msg = '📊 RAPPORT DU PORTEFEUILLE\\n';
+        msg += '='.repeat(40) + '\\n';
+        msg += 'Date: ' + new Date().toLocaleDateString() + '\\n\\n';
+        msg += '💰 Total Invested: ' + s.total_invested_tnd.toFixed(2) + ' TND\\n';
+        msg += '💰 Current Value: ' + s.total_current_usd.toFixed(2) + ' USD\\n';
+        msg += '📈 Profit/Loss: ' + (s.total_profit_tnd >= 0 ? '+' : '') + s.total_profit_tnd.toFixed(2) + ' TND\\n';
+        msg += '📊 ROI: ' + (s.roi_percent >= 0 ? '+' : '') + s.roi_percent.toFixed(2) + '%\\n';
+        msg += '\\n🏆 Best Performer: ' + (r.best_performer || 'N/A') + '\\n';
+        msg += '📉 Worst Performer: ' + (r.worst_performer || 'N/A') + '\\n';
+        msg += '\\n📋 Week Transactions: ' + r.week_count + '\\n';
+        msg += '\\n📊 Details by Asset:\\n';
+        for (var asset in s.assets) {
+            var a = s.assets[asset];
+            msg += '\\n' + asset + ':\\n';
+            msg += '   Quantity: ' + a.quantity.toFixed(8) + '\\n';
+            msg += '   Invested: ' + a.invested_tnd.toFixed(2) + ' TND\\n';
+            msg += '   Value: ' + a.current_value_usd.toFixed(2) + ' USD\\n';
+            msg += '   Profit: ' + (a.profit_tnd >= 0 ? '+' : '') + a.profit_tnd.toFixed(2) + ' TND\\n';
+            msg += '   ROI: ' + (a.roi_percent >= 0 ? '+' : '') + a.roi_percent.toFixed(2) + '%\\n';
+        }
+        alert(msg);
+        addLog('Portfolio report loaded', 'success');
+    }
+}
+
+document.getElementById('btnCheckPrices').addEventListener('click', checkPrices);
+document.getElementById('btnWeeklyReport').addEventListener('click', weeklyReport);
+
+addLog('🤖 Bot 24h/7j - Initialisation...', 'info');
+updateStatus();
+updatePrices();
+loadAnalyses();
+loadPortfolio();
+
+setInterval(updateStatus, 5000);
+setInterval(updatePrices, 30000);
+setInterval(loadAnalyses, 10000);
+setInterval(loadPortfolio, 60000);
+
+addLog('✅ Bot 24h/7j actif - Monitoring permanent', 'success');
+</script>
+</body>
+</html>
+'''
+
+# ===== PAGE PARAMÈTRES =====
+SETTINGS_PAGE = '''
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paramètres - LongTerm AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0a;
+            color: #e5e5e5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        .header {
+            background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
+            border-radius: 16px;
+            padding: 20px 25px;
+            margin-bottom: 25px;
+            border: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .logo h1 {
+            background: linear-gradient(135deg, #f7931a, #ffd700);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 24px;
+        }
+        .logo span { color: #666; font-size: 13px; display: block; }
+        .card {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #2a2a2a;
+            margin-bottom: 20px;
+        }
+        .card-title {
+            font-size: 16px;
+            color: #f7931a;
+            font-weight: bold;
+            margin-bottom: 16px;
+            border-bottom: 1px solid #2a2a2a;
+            padding-bottom: 10px;
+        }
+        .config-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .config-row label {
+            min-width: 180px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        .config-row input, .config-row select {
+            flex: 1;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            background: #0a0a0a;
+            color: white;
+            font-size: 14px;
+            min-width: 150px;
+        }
+        .config-row input:focus, .config-row select:focus { outline: none; border-color: #f7931a; }
+        .config-row input::placeholder { color: #444; }
+        .btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-info { background: #1e3a5f; color: #60a5fa; }
+        .btn-info:hover:not(:disabled) { background: #1e40af; transform: scale(1.02); }
+        .btn-success { background: #065f46; color: #34d399; }
+        .btn-success:hover:not(:disabled) { background: #047857; transform: scale(1.02); }
+        .btn-danger { background: #7f1d1d; color: #f87171; }
+        .btn-danger:hover:not(:disabled) { background: #991b1b; transform: scale(1.02); }
+        .btn-warning { background: #7c5a1a; color: #fbbf24; }
+        .btn-warning:hover:not(:disabled) { background: #9a6d1a; transform: scale(1.02); }
+        .btn-back { background: #2a2a2a; color: #888; }
+        .btn-back:hover { background: #3a3a3a; color: #fff; }
+        .logout-btn {
+            background: #4a1a1a;
+            border: 1px solid #f87171;
+            color: #f87171;
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .logout-btn:hover { background: #7f1d1d; transform: scale(1.02); }
+        .checkbox-group {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #aaa;
+            cursor: pointer;
+        }
+        .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; accent-color: #f7931a; cursor: pointer; }
+        .result-message {
+            margin-top: 12px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        .result-message.success { display: block; background: #064e3b; color: #34d399; border: 1px solid #34d399; }
+        .result-message.error { display: block; background: #4a1a1a; color: #f87171; border: 1px solid #f87171; }
+        .result-message.info { display: block; background: #1a2a4a; color: #60a5fa; border: 1px solid #60a5fa; }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .btn-group .btn { flex: 1; min-width: 120px; }
+        .channel-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #0a0a0a;
+            padding: 10px 14px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid #2a2a2a;
+        }
+        .channel-item:hover { border-color: #444; }
+        .channel-name { font-size: 14px; color: #aaa; font-family: monospace; }
+        .channel-status {
+            font-size: 12px;
+            padding: 2px 10px;
+            border-radius: 12px;
+        }
+        .channel-status.active { background: #064e3b; color: #34d399; }
+        .channel-status.inactive { background: #4a1a1a; color: #f87171; }
+        .channel-actions { display: flex; gap: 8px; }
+        .channel-actions button {
+            padding: 4px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .channel-actions .btn-remove { background: #4a1a1a; color: #f87171; }
+        .channel-actions .btn-remove:hover { background: #7f1d1d; }
+        .channel-actions .btn-toggle { background: #1e3a5f; color: #60a5fa; }
+        .channel-actions .btn-toggle:hover { background: #1e40af; }
+        @media (max-width: 600px) {
+            .config-row { flex-direction: column; align-items: stretch; }
+            .config-row label { min-width: auto; }
+            .config-row input { min-width: auto; }
+            .btn-group .btn { flex: 1 1 100%; }
+            .header { flex-direction: column; gap: 10px; text-align: center; }
+            .channel-item { flex-direction: column; gap: 8px; align-items: stretch; }
+            .channel-actions { justify-content: center; }
+        }
+        .empty-message { color: #444; text-align: center; padding: 20px; font-style: italic; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div class="logo">
+            <h1>⚙️ Paramètres</h1>
+            <span>LongTerm AI - Configuration</span>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-back" onclick="window.location.href='/'">← Retour au Dashboard</button>
+            <button class="logout-btn" onclick="logout()">🔓 Déconnexion</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📡 Chaînes Telegram surveillées</div>
+        <div id="channelsList">
+            <div class="empty-message">Aucune chaîne configurée</div>
+        </div>
+        <div class="config-row" style="margin-top:15px;border-top:1px solid #2a2a2a;padding-top:15px;">
+            <label>Ajouter une chaîne</label>
+            <input type="text" id="newChannel" placeholder="@nom_du_canal" style="flex:1;">
+            <button onclick="addChannel()" class="btn btn-success">➕ Ajouter</button>
+        </div>
+        <div style="font-size:12px;color:#444;margin-top:5px;">Format: @nom_du_canal (ex: @crypto_news_fr)</div>
+        <div id="channelResult" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📊 Intervalle de vérification des prix</div>
+        <div class="config-row">
+            <label>Minutes entre chaque vérification</label>
+            <input type="number" id="priceInterval" placeholder="Minutes (ex: 30)" value="30" min="1" max="1440">
+            <button onclick="savePriceInterval()" class="btn btn-info" id="btnInterval">Enregistrer</button>
+        </div>
+        <div style="font-size:12px;color:#444;">Défaut: 30 minutes (entre 1 et 1440 minutes)</div>
+        <div id="intervalResult" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">🔔 Seuil d'alerte de prix</div>
+        <div class="config-row">
+            <label>Pourcentage de variation pour alerter</label>
+            <input type="number" id="alertThreshold" placeholder="% (ex: 5)" value="5" min="0.5" max="50" step="0.5">
+            <button onclick="saveAlertThreshold()" class="btn btn-info" id="btnThreshold">Enregistrer</button>
+        </div>
+        <div style="font-size:12px;color:#444;">Défaut: 5% - Une alerte sera envoyée si un actif varie de ce pourcentage</div>
+        <div id="thresholdResult" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📱 Notifications</div>
+        <div class="checkbox-group">
+            <label><input type="checkbox" id="notifPrice" checked> Alertes de prix</label>
+            <label><input type="checkbox" id="notifNews" checked> Alertes news</label>
+            <label><input type="checkbox" id="notifWeekly" checked> Rapport hebdomadaire</label>
+        </div>
+        <button onclick="saveNotifications()" class="btn btn-success" style="margin-top:15px;" id="btnNotif">Enregistrer les préférences</button>
+        <div id="notifResult" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">🛠️ Maintenance</div>
+        <div class="btn-group">
+            <button onclick="exportData()" class="btn btn-warning" id="btnExport">📥 Exporter les données</button>
+            <button onclick="resetBot()" class="btn btn-danger" id="btnReset">🔄 Réinitialiser le bot</button>
+        </div>
+        <div style="font-size:12px;color:#444;margin-top:10px;">
+            Export: Sauvegarde toutes les données en fichier JSON<br>
+            Reset: Supprime toutes les données et redémarre le bot
+        </div>
+        <div id="maintenanceResult" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+
+    <div id="settingsResult" class="result-message"></div>
+
+    <div class="card">
+        <div class="card-title">📋 Actions récentes</div>
+        <div id="settingsLogs" style="max-height:150px;overflow-y:auto;font-size:13px;color:#666;background:#0a0a0a;padding:12px;border-radius:8px;border:1px solid #1a1a1a;">
+            <div style="color:#444;">Prêt à configurer</div>
+        </div>
+    </div>
+</div>
+
+<script>
+function logout() {
+    if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
+        localStorage.removeItem('auth');
+        window.location.href = '/login';
+    }
+}
+
+function addLog(msg, type) {
+    var log = document.getElementById('settingsLogs');
+    var entry = document.createElement('div');
+    var time = new Date().toLocaleTimeString();
+    var colors = { success: '#34d399', error: '#f87171', info: '#60a5fa', warning: '#fbbf24' };
+    entry.innerHTML = '<span style="color:#333;">[' + time + ']</span> <span style="color:' + (colors[type] || '#888') + ';">' + msg + '</span>';
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+    if (log.children.length > 50) log.removeChild(log.firstChild);
+}
+
+async function callAPI(endpoint, method, data) {
+    method = method || 'GET';
+    try {
+        var auth = localStorage.getItem('auth') || btoa('admin:admin123');
+        var options = {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Basic ' + auth
+            }
+        };
+        if (data) options.body = JSON.stringify(data);
+        var response = await fetch(endpoint, options);
+        if (!response.ok) {
+            if (response.status === 401) {
+                addLog('⚠️ Session expirée', 'warning');
+                localStorage.removeItem('auth');
+                window.location.href = '/login';
+                return null;
+            }
+            return { success: false, error: 'HTTP ' + response.status + ' - ' + response.statusText };
+        }
+        return await response.json();
+    } catch (error) {
+        return { success: false, error: error.message || 'Erreur réseau' };
+    }
+}
+
+function showResult(elementId, message, type) {
+    var el = document.getElementById(elementId);
+    if (!el) return;
+    var colors = { success: '#34d399', error: '#f87171', info: '#60a5fa', warning: '#fbbf24' };
+    el.style.color = colors[type] || '#888';
+    el.textContent = message;
+    addLog(message, type);
+}
+
+async function loadChannels() {
+    var data = await callAPI('/api/settings/channels');
+    var list = document.getElementById('channelsList');
+    if (!data || !data.success) {
+        list.innerHTML = '<div class="empty-message">❌ Erreur de chargement</div>';
+        return;
+    }
+    var channels = data.channels || [];
+    if (channels.length === 0) {
+        list.innerHTML = '<div class="empty-message">Aucune chaîne configurée</div>';
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < channels.length; i++) {
+        var ch = channels[i];
+        var statusClass = ch.active ? 'active' : 'inactive';
+        var statusText = ch.active ? '✅ Actif' : '⛔ Inactif';
+        html += '<div class="channel-item">';
+        html += '<span class="channel-name">' + ch.channel + '</span>';
+        html += '<span class="channel-status ' + statusClass + '">' + statusText + '</span>';
+        html += '<div class="channel-actions">';
+        html += '<button class="btn-toggle" onclick="toggleChannel(' + i + ')">' + (ch.active ? 'Désactiver' : 'Activer') + '</button>';
+        html += '<button class="btn-remove" onclick="removeChannel(' + i + ')">Supprimer</button>';
+        html += '</div>';
+        html += '</div>';
+    }
+    list.innerHTML = html;
+}
+
+async function addChannel() {
+    var input = document.getElementById('newChannel');
+    var channel = input.value.trim();
+    if (!channel) {
+        showResult('channelResult', '❌ Veuillez entrer un nom de chaîne (ex: @crypto_news)', 'error');
+        return;
+    }
+    if (!channel.startsWith('@')) channel = '@' + channel;
+    var btn = document.querySelector('.config-row .btn-success');
+    btn.disabled = true;
+    btn.textContent = '⏳ Ajout...';
+    var data = await callAPI('/api/settings/channels/add', 'POST', { channel: channel });
+    btn.disabled = false;
+    btn.textContent = '➕ Ajouter';
+    if (data && data.success) {
+        showResult('channelResult', '✅ Chaîne ajoutée: ' + channel, 'success');
+        input.value = '';
+        loadChannels();
+    } else {
+        showResult('channelResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function removeChannel(index) {
+    if (!confirm('⚠️ Voulez-vous vraiment supprimer cette chaîne ?')) return;
+    var data = await callAPI('/api/settings/channels/remove', 'POST', { index: index });
+    if (data && data.success) {
+        showResult('channelResult', '✅ Chaîne supprimée', 'success');
+        loadChannels();
+    } else {
+        showResult('channelResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function toggleChannel(index) {
+    var data = await callAPI('/api/settings/channels/toggle', 'POST', { index: index });
+    if (data && data.success) {
+        showResult('channelResult', '✅ Statut de la chaîne modifié', 'success');
+        loadChannels();
+    } else {
+        showResult('channelResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function savePriceInterval() {
+    var btn = document.getElementById('btnInterval');
+    var minutes = parseInt(document.getElementById('priceInterval').value);
+    if (!minutes || minutes < 1) {
+        showResult('intervalResult', '❌ Entrez un nombre valide (≥ 1 minute)', 'error');
+        return;
+    }
+    btn.disabled = true;
+    btn.textContent = '⏳ En cours...';
+    var data = await callAPI('/api/settings/interval', 'POST', { interval_minutes: minutes });
+    btn.disabled = false;
+    btn.textContent = 'Enregistrer';
+    if (data && data.success) {
+        showResult('intervalResult', '✅ Intervalle mis à jour: ' + minutes + ' minutes', 'success');
+    } else {
+        showResult('intervalResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function saveAlertThreshold() {
+    var btn = document.getElementById('btnThreshold');
+    var threshold = parseFloat(document.getElementById('alertThreshold').value);
+    if (!threshold || threshold < 0) {
+        showResult('thresholdResult', '❌ Entrez un pourcentage valide', 'error');
+        return;
+    }
+    btn.disabled = true;
+    btn.textContent = '⏳ En cours...';
+    var data = await callAPI('/api/settings/threshold', 'POST', { threshold_percent: threshold });
+    btn.disabled = false;
+    btn.textContent = 'Enregistrer';
+    if (data && data.success) {
+        showResult('thresholdResult', '✅ Seuil mis à jour: ' + threshold + '%', 'success');
+    } else {
+        showResult('thresholdResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function saveNotifications() {
+    var btn = document.getElementById('btnNotif');
+    var settings = {
+        price: document.getElementById('notifPrice').checked,
+        news: document.getElementById('notifNews').checked,
+        weekly: document.getElementById('notifWeekly').checked
+    };
+    btn.disabled = true;
+    btn.textContent = '⏳ En cours...';
+    var data = await callAPI('/api/settings/notifications', 'POST', settings);
+    btn.disabled = false;
+    btn.textContent = 'Enregistrer les préférences';
+    if (data && data.success) {
+        showResult('notifResult', '✅ Préférences de notification enregistrées', 'success');
+    } else {
+        showResult('notifResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function exportData() {
+    var btn = document.getElementById('btnExport');
+    btn.disabled = true;
+    btn.textContent = '⏳ Export...';
+    showResult('maintenanceResult', '⏳ Export en cours...', 'info');
+    var data = await callAPI('/api/export-data');
+    btn.disabled = false;
+    btn.textContent = '📥 Exporter les données';
+    if (data && data.success) {
+        try {
+            var json = JSON.stringify(data.data, null, 2);
+            var blob = new Blob([json], {type: 'application/json'});
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'longterm-ai-data-' + new Date().toISOString().slice(0,10) + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+            showResult('maintenanceResult', '✅ Export terminé! Fichier téléchargé', 'success');
+        } catch (e) {
+            showResult('maintenanceResult', '❌ Erreur lors du téléchargement: ' + e.message, 'error');
+        }
+    } else {
+        showResult('maintenanceResult', '❌ Erreur: ' + (data.error || 'Aucune donnée à exporter'), 'error');
+    }
+}
+
+async function resetBot() {
+    if (!confirm('⚠️ Voulez-vous vraiment réinitialiser le bot ? Toutes les données seront effacées.')) return;
+    var btn = document.getElementById('btnReset');
+    btn.disabled = true;
+    btn.textContent = '⏳ Reset...';
+    showResult('maintenanceResult', '⏳ Réinitialisation en cours...', 'info');
+    var data = await callAPI('/api/reset', 'POST');
+    btn.disabled = false;
+    btn.textContent = '🔄 Réinitialiser le bot';
+    if (data && data.success) {
+        showResult('maintenanceResult', '✅ Bot réinitialisé avec succès. Redirection...', 'success');
+        setTimeout(function() { window.location.href = '/'; }, 2000);
+    } else {
+        showResult('maintenanceResult', '❌ Erreur: ' + (data.error || 'Inconnue'), 'error');
+    }
+}
+
+async function loadSettings() {
+    try {
+        var data = await callAPI('/api/status');
+        if (data && data.config) {
+            var config = data.config;
+            if (config.price_interval) document.getElementById('priceInterval').value = config.price_interval;
+            if (config.alert_threshold) document.getElementById('alertThreshold').value = config.alert_threshold;
+            if (config.notifications) {
+                if (config.notifications.price !== undefined) document.getElementById('notifPrice').checked = config.notifications.price;
+                if (config.notifications.news !== undefined) document.getElementById('notifNews').checked = config.notifications.news;
+                if (config.notifications.weekly !== undefined) document.getElementById('notifWeekly').checked = config.notifications.weekly;
+            }
+            addLog('✅ Paramètres chargés depuis le serveur', 'success');
+        }
+    } catch (e) {
+        addLog('⚠️ Impossible de charger les paramètres', 'warning');
+    }
+}
+
+addLog('📋 Page paramètres chargée', 'info');
+loadSettings();
+loadChannels();
+
+async function testServer() {
+    try {
+        var response = await fetch('/api/status');
+        if (response.ok) {
+            addLog('✅ Serveur connecté', 'success');
+        } else {
+            addLog('⚠️ Serveur accessible mais erreur ' + response.status, 'warning');
+        }
+    } catch (e) {
+        addLog('❌ Serveur inaccessible - Vérifiez que le bot tourne', 'error');
+    }
+}
+setTimeout(testServer, 1000);
+</script>
+</body>
+</html>
+'''
+
+# ===== ROUTES AVEC AUTHENTIFICATION =====
+
+@app.get("/login")
+async def login_page():
+    return HTMLResponse(LOGIN_PAGE)
+
+@app.get("/web")
+async def web_interface(request: Request):
+    if not check_auth_header(request):
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(MAIN_PAGE)
+
+@app.get("/")
+async def home(request: Request):
+    auth_param = request.query_params.get("auth")
+    if auth_param:
+        try:
+            decoded = base64.b64decode(auth_param).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                response = HTMLResponse(MAIN_PAGE)
+                response.set_cookie(
+                    key="auth",
+                    value=auth_param,
+                    max_age=86400,
+                    path="/",
+                    httponly=False,
+                    samesite="lax"
+                )
+                return response
+        except:
+            pass
+    
+    auth_cookie = request.cookies.get("auth")
+    if auth_cookie:
+        try:
+            decoded = base64.b64decode(auth_cookie).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                return HTMLResponse(MAIN_PAGE)
+        except:
+            pass
+    
+    if check_auth_header(request):
+        return HTMLResponse(MAIN_PAGE)
+    
+    return HTMLResponse(LOGIN_PAGE)
+
+@app.get("/settings")
+async def settings_page(request: Request):
+    auth_cookie = request.cookies.get("auth")
+    if auth_cookie:
+        try:
+            decoded = base64.b64decode(auth_cookie).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                return HTMLResponse(SETTINGS_PAGE)
+        except:
+            pass
+    
+    if check_auth_header(request):
+        return HTMLResponse(SETTINGS_PAGE)
+    
+    return RedirectResponse(url="/login", status_code=302)
+
+@app.get("/history")
+async def history_page(request: Request):
+    if not check_auth_header(request):
+        return RedirectResponse(url="/login", status_code=302)
+    return RedirectResponse(url="/history", status_code=302)
+
+# ============================================
+# POINT D'ENTRÉE
+# ============================================
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("LongTerm AI Bot v3.0 - 24h/7j")
+    print("=" * 50)
+    print("Interface: http://localhost:8000/")
+    print("Paramètres: http://localhost:8000/settings")
+    print("API: http://localhost:8000/api/status")
+    print("=" * 50)
+    print("🔐 Identifiants par défaut:")
+    print("   Utilisateur: admin")
+    print("   Mot de passe: admin123")
+    print("=" * 50)
+    print("🤖 Bot 24h/7j actif en permanence")
+    print("=" * 50)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
