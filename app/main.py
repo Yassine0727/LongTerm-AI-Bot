@@ -53,38 +53,55 @@ async def auth_middleware(request: Request, call_next):
     """Middleware pour protéger toutes les routes API"""
     
     # Routes publiques (sans authentification)
-    public_routes = ["/api/ping"]
+    public_routes = ["/api/ping", "/telegram-login"]
     
+    # Vérifier si la route est publique
     if request.url.path in public_routes:
         return await call_next(request)
     
-    if not request.url.path.startswith("/api/"):
-        return await call_next(request)
-    
-    auth_header = request.headers.get("authorization")
-    if not auth_header:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Authentification requise", "error": "Unauthorized"}
-        )
-    
-    try:
-        auth = auth_header.split(" ")[1]
-        decoded = base64.b64decode(auth).decode("utf-8")
-        username, password = decoded.split(":")
-        
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            return await call_next(request)
-        else:
+    # Routes API protégées
+    if request.url.path.startswith("/api/"):
+        auth_header = request.headers.get("authorization")
+        if not auth_header:
             return JSONResponse(
                 status_code=401,
-                content={"detail": "Identifiants incorrects", "error": "Unauthorized"}
+                content={"detail": "Authentification requise", "error": "Unauthorized"}
             )
-    except:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Format d'authentification invalide", "error": "Unauthorized"}
-        )
+        
+        try:
+            auth = auth_header.split(" ")[1]
+            decoded = base64.b64decode(auth).decode("utf-8")
+            username, password = decoded.split(":")
+            
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                return await call_next(request)
+            else:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Identifiants incorrects", "error": "Unauthorized"}
+                )
+        except:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Format d'authentification invalide", "error": "Unauthorized"}
+            )
+    
+    # Routes non-API (pages HTML) - vérifier l'authentification
+    auth_cookie = request.cookies.get("auth")
+    if auth_cookie:
+        try:
+            decoded = base64.b64decode(auth_cookie).decode("utf-8")
+            username, password = decoded.split(":")
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                return await call_next(request)
+        except:
+            pass
+    
+    # Rediriger vers la page de login si non authentifié
+    if request.url.path not in ["/login", "/"]:
+        return RedirectResponse(url="/login", status_code=302)
+    
+    return await call_next(request)
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
@@ -213,9 +230,10 @@ from telethon.errors import SessionPasswordNeededError
 telegram_auth_client = None
 telegram_auth_phone = None
 
+# ===== PAGE DE CONNEXION TELEGRAM (PUBLIQUE) =====
 @app.get("/telegram-login")
 async def telegram_login_page():
-    """Page de connexion Telegram"""
+    """Page de connexion Telegram - accessible sans authentification"""
     html = '''
     <!DOCTYPE html>
     <html>
@@ -241,15 +259,8 @@ async def telegram_login_page():
                 width: 100%;
                 text-align: center;
             }
-            h1 {
-                color: #f7931a;
-                margin-bottom: 10px;
-            }
-            .subtitle {
-                color: #888;
-                font-size: 14px;
-                margin-bottom: 30px;
-            }
+            h1 { color: #f7931a; margin-bottom: 10px; }
+            .subtitle { color: #888; font-size: 14px; margin-bottom: 30px; }
             .btn-telegram {
                 background: #0088cc;
                 color: white;
@@ -262,21 +273,10 @@ async def telegram_login_page():
                 width: 100%;
                 transition: all 0.3s;
             }
-            .btn-telegram:hover {
-                background: #006699;
-                transform: scale(1.02);
-            }
-            .btn-telegram:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-            }
-            .input-group {
-                margin: 15px 0;
-                display: none;
-            }
-            .input-group.show {
-                display: block;
-            }
+            .btn-telegram:hover { background: #006699; transform: scale(1.02); }
+            .btn-telegram:disabled { opacity: 0.5; cursor: not-allowed; }
+            .input-group { margin: 15px 0; display: none; }
+            .input-group.show { display: block; }
             .input-group input {
                 width: 100%;
                 padding: 12px;
@@ -287,28 +287,24 @@ async def telegram_login_page():
                 font-size: 16px;
                 text-align: center;
             }
-            .input-group input:focus {
-                outline: none;
-                border-color: #f7931a;
-            }
+            .input-group input:focus { outline: none; border-color: #f7931a; }
             .status {
                 margin-top: 15px;
                 padding: 10px;
                 border-radius: 8px;
                 font-size: 14px;
             }
-            .status.success {
-                background: #064e3b;
-                color: #34d399;
+            .status.success { background: #064e3b; color: #34d399; }
+            .status.error { background: #4a1a1a; color: #f87171; }
+            .status.info { background: #1a2a4a; color: #60a5fa; }
+            .back-link {
+                display: block;
+                margin-top: 20px;
+                color: #888;
+                text-decoration: none;
+                font-size: 14px;
             }
-            .status.error {
-                background: #4a1a1a;
-                color: #f87171;
-            }
-            .status.info {
-                background: #1a2a4a;
-                color: #60a5fa;
-            }
+            .back-link:hover { color: #f7931a; }
         </style>
     </head>
     <body>
@@ -329,6 +325,8 @@ async def telegram_login_page():
             </div>
             
             <div id="status"></div>
+            
+            <a href="/" class="back-link">← Retour au Dashboard</a>
         </div>
 
         <script>
