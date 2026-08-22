@@ -202,6 +202,279 @@ def get_telegram_service():
         logger.info("✅ Instance TelegramService créée")
     return telegram_service
 
+# ============================================
+# AUTHENTIFICATION TELEGRAM VIA WEB (BOUTON)
+# ============================================
+
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
+
+# Variables globales pour l'authentification
+telegram_auth_client = None
+telegram_auth_phone = None
+
+@app.get("/telegram-login")
+async def telegram_login_page():
+    """Page de connexion Telegram"""
+    html = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Connexion Telegram</title>
+        <style>
+            body {
+                background: #0a0a0a;
+                color: #e5e5e5;
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+            }
+            .container {
+                background: #1a1a1a;
+                padding: 40px;
+                border-radius: 16px;
+                border: 1px solid #333;
+                max-width: 400px;
+                width: 100%;
+                text-align: center;
+            }
+            h1 {
+                color: #f7931a;
+                margin-bottom: 10px;
+            }
+            .subtitle {
+                color: #888;
+                font-size: 14px;
+                margin-bottom: 30px;
+            }
+            .btn-telegram {
+                background: #0088cc;
+                color: white;
+                border: none;
+                padding: 14px 30px;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                width: 100%;
+                transition: all 0.3s;
+            }
+            .btn-telegram:hover {
+                background: #006699;
+                transform: scale(1.02);
+            }
+            .btn-telegram:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+            .input-group {
+                margin: 15px 0;
+                display: none;
+            }
+            .input-group.show {
+                display: block;
+            }
+            .input-group input {
+                width: 100%;
+                padding: 12px;
+                border-radius: 8px;
+                border: 1px solid #333;
+                background: #0a0a0a;
+                color: white;
+                font-size: 16px;
+                text-align: center;
+            }
+            .input-group input:focus {
+                outline: none;
+                border-color: #f7931a;
+            }
+            .status {
+                margin-top: 15px;
+                padding: 10px;
+                border-radius: 8px;
+                font-size: 14px;
+            }
+            .status.success {
+                background: #064e3b;
+                color: #34d399;
+            }
+            .status.error {
+                background: #4a1a1a;
+                color: #f87171;
+            }
+            .status.info {
+                background: #1a2a4a;
+                color: #60a5fa;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔐 Telegram</h1>
+            <p class="subtitle">Connectez votre compte Telegram</p>
+            
+            <button class="btn-telegram" onclick="startAuth()" id="btnStart">
+                📱 Se connecter avec Telegram
+            </button>
+            
+            <div class="input-group" id="codeGroup">
+                <p style="color:#888;font-size:14px;">Code reçu sur Telegram</p>
+                <input type="text" id="codeInput" placeholder="Ex: 12345" maxlength="10">
+                <button class="btn-telegram" onclick="submitCode()" style="margin-top:10px;background:#f7931a;">
+                    ✅ Valider le code
+                </button>
+            </div>
+            
+            <div id="status"></div>
+        </div>
+
+        <script>
+            async function startAuth() {
+                const btn = document.getElementById('btnStart');
+                const status = document.getElementById('status');
+                
+                btn.disabled = true;
+                btn.textContent = '⏳ Envoi du code...';
+                
+                try {
+                    const response = await fetch('/api/telegram/auth/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        status.className = 'status info';
+                        status.textContent = '✅ Code envoyé ! Vérifiez Telegram';
+                        document.getElementById('codeGroup').classList.add('show');
+                        btn.textContent = '📱 Se connecter avec Telegram';
+                        btn.disabled = false;
+                    } else {
+                        status.className = 'status error';
+                        status.textContent = '❌ ' + data.error;
+                        btn.textContent = '📱 Se connecter avec Telegram';
+                        btn.disabled = false;
+                    }
+                } catch(e) {
+                    status.className = 'status error';
+                    status.textContent = '❌ Erreur: ' + e.message;
+                    btn.textContent = '📱 Se connecter avec Telegram';
+                    btn.disabled = false;
+                }
+            }
+            
+            async function submitCode() {
+                const code = document.getElementById('codeInput').value;
+                const status = document.getElementById('status');
+                const btn = document.querySelector('.btn-telegram[onclick="submitCode()"]');
+                
+                if (!code) {
+                    status.className = 'status error';
+                    status.textContent = '❌ Entrez le code reçu';
+                    return;
+                }
+                
+                btn.disabled = true;
+                btn.textContent = '⏳ Connexion...';
+                
+                try {
+                    const response = await fetch('/api/telegram/auth/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code: code })
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        status.className = 'status success';
+                        status.textContent = '✅ ' + data.message + ' 🎉';
+                        document.getElementById('codeGroup').classList.remove('show');
+                        btn.textContent = '✅ Connecté !';
+                        
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 2000);
+                    } else {
+                        status.className = 'status error';
+                        status.textContent = '❌ ' + data.error;
+                        btn.textContent = '✅ Valider le code';
+                        btn.disabled = false;
+                    }
+                } catch(e) {
+                    status.className = 'status error';
+                    status.textContent = '❌ Erreur: ' + e.message;
+                    btn.textContent = '✅ Valider le code';
+                    btn.disabled = false;
+                }
+            }
+        </script>
+    </body>
+    </html>
+    '''
+    return HTMLResponse(html)
+
+@app.post("/api/telegram/auth/start")
+async def telegram_auth_start():
+    """Démarre l'authentification Telegram"""
+    global telegram_auth_client, telegram_auth_phone
+    
+    try:
+        service = get_telegram_service()
+        if not service:
+            return {"success": False, "error": "Service non disponible"}
+        
+        # Créer le client pour l'authentification
+        telegram_auth_client = TelegramClient(
+            "session/telegram_render",
+            service.api_id,
+            service.api_hash
+        )
+        telegram_auth_phone = service.phone
+        
+        await telegram_auth_client.connect()
+        await telegram_auth_client.send_code_request(telegram_auth_phone)
+        
+        return {"success": True, "message": "Code envoyé !"}
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/telegram/auth/verify")
+async def telegram_auth_verify(data: dict):
+    """Vérifie le code Telegram"""
+    global telegram_auth_client, telegram_auth_phone
+    
+    try:
+        code = data.get("code", "").strip()
+        if not code:
+            return {"success": False, "error": "Code requis"}
+        
+        if telegram_auth_client is None:
+            return {"success": False, "error": "Session expirée, recommencez"}
+        
+        # Vérifier le code
+        await telegram_auth_client.sign_in(telegram_auth_phone, code)
+        
+        # Sauvegarder la session
+        await telegram_auth_client.disconnect()
+        
+        # Redémarrer le service pour utiliser la nouvelle session
+        logger.info("🔄 Redémarrage du service Telegram avec la nouvelle session...")
+        await stop_telegram_service()
+        await start_telegram_service()
+        
+        return {"success": True, "message": "Connexion réussie ! Bot redémarré"}
+        
+    except SessionPasswordNeededError:
+        return {"success": False, "error": "Mot de passe 2FA requis"}
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
 # ===== GESTIONNAIRES DE MESSAGES =====
 
 async def handle_telegram_message(text: str, message_id: str, date):
@@ -423,6 +696,7 @@ async def startup_event():
     else:
         logger.error("❌ ÉCHEC DU DÉMARRAGE TELEGRAM")
         logger.error("   Vérifiez que config.json contient des canaux valides")
+        logger.info("   Allez sur /telegram-login pour vous connecter")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -966,6 +1240,23 @@ MAIN_PAGE = '''
             gap: 20px;
             flex-wrap: wrap;
         }
+        .telegram-login-btn {
+            background: #0088cc;
+            border: none;
+            color: white;
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .telegram-login-btn:hover {
+            background: #006699;
+            transform: scale(1.02);
+        }
         .status-badge {
             padding: 8px 20px;
             border-radius: 20px;
@@ -1182,6 +1473,9 @@ MAIN_PAGE = '''
                 <span id="statusText">ONLINE 24/7</span>
             </span>
             <span style="color:#666;font-size:13px;" id="lastUpdate">Last update: -</span>
+            <button class="telegram-login-btn" onclick="window.location.href='/telegram-login'">
+                📱 Connecter Telegram
+            </button>
             <button class="reload-btn" onclick="reloadBot()" id="btnReload">🔄 Recharger</button>
             <button class="settings-btn" onclick="window.location.href='/settings'">⚙️ Paramètres</button>
             <button class="logout-btn" onclick="logout()">🔓 Déconnexion</button>
