@@ -3,49 +3,59 @@ import asyncio
 import os
 from telethon import TelegramClient
 
-# ===== VOS IDENTIFIANTS TELEGRAM =====
-# À remplacer par vos vraies valeurs
-API_ID = 38955597              # Votre API ID
-API_HASH = "275fbac1b68e0984459d044b9b1a20cf"   # Votre API Hash
-PHONE = "+21699038382"        # Votre numéro avec indicatif
+# ===== CONFIGURATION =====
+API_ID = 0  # METTEZ VOTRE API_ID ICI
+API_HASH = "votre_api_hash"  # METTEZ VOTRE API_HASH ICI
+PHONE = "+21699038382"  # VOTRE NUMERO
 
 async def main():
-    # Créer le dossier session s'il n'existe pas
+    print("=" * 50)
+    print("🔐 AUTHENTIFICATION TELEGRAM")
+    print("=" * 50)
+    print("📞 Numéro: " + PHONE)
+    print("=" * 50)
+    
+    # Créer le dossier session
     os.makedirs("session", exist_ok=True)
     
-    # Créer le client Telegram
-    client = TelegramClient("session/telegram", API_ID, API_HASH)
+    # Supprimer l'ancienne session si elle existe
+    if os.path.exists("session/telegram_render.session"):
+        os.remove("session/telegram_render.session")
+        print("🗑️ Ancienne session supprimée")
     
-    print("=" * 50)
-    print("📱 Connexion à Telegram...")
-    print("=" * 50)
-    print(f"📞 Numéro: {PHONE}")
-    print("📲 Un code de vérification va vous être envoyé")
-    print("=" * 50)
+    # Créer le client
+    client = TelegramClient("session/telegram_render", API_ID, API_HASH)
     
-    # Démarrer la connexion
-    await client.start(phone=PHONE)
-    
-    # Vérifier la connexion
-    me = await client.get_me()
-    print("=" * 50)
-    print(f"✅ Connecté avec succès !")
-    print(f"👤 Nom: {me.first_name} {me.last_name or ''}")
-    print(f"🆔 Username: @{me.username}" if me.username else "🆔 Pas d'username")
-    print("=" * 50)
-    
-    # Tester l'accès à un canal (optionnel)
     try:
-        channel = await client.get_entity("@testbot1252")
-        print(f"📢 Canal trouvé: {channel.title}")
+        print("🔄 Connexion en cours...")
+        print("📲 Un code de vérification va vous être envoyé")
+        print("   (par SMS ou dans Telegram)")
+        print("=" * 50)
+        
+        # Démarrer l'authentification
+        await client.start(phone=PHONE)
+        
+        # Récupérer les infos
+        me = await client.get_me()
+        print("=" * 50)
+        print("✅ CONNEXION RÉUSSIE !")
+        print(f"👤 Nom: {me.first_name}")
+        print(f"📱 Username: @{me.username}")
+        print(f"🆔 ID: {me.id}")
+        print(f"📁 Session: session/telegram_render.session")
+        print("=" * 50)
+        print("📌 Cette session est prête pour Render")
+        
     except Exception as e:
-        print(f"⚠️ Canal non trouvé: {e}")
-    
-    await client.disconnect()
-    print("=" * 50)
-    print("✅ Session sauvegardée dans: session/telegram.session")
-    print("📁 Vous pouvez maintenant pousser ce fichier sur GitHub")
-    print("=" * 50)
+        print(f"❌ Erreur: {e}")
+        print("\nSolutions:")
+        print("   1. Vérifiez API_ID et API_HASH sur https://my.telegram.org/apps")
+        print("   2. Vérifiez que votre numéro est correct")
+        print("   3. Assurez-vous que votre compte Telegram est actif")
+        
+    finally:
+        await client.disconnect()
+        print("🔌 Déconnecté")
 
 if __name__ == "__main__":
     asyncio.run(main())
