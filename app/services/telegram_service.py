@@ -6,11 +6,12 @@ from typing import Optional, Callable, List
 
 from telethon import TelegramClient, events
 from telethon.tl.types import Message
+from telethon.tl.functions.auth import RequestPasswordRecoveryRequest
 
 logger = logging.getLogger(__name__)
 
 class TelegramService:
-    """Service de connexion et d'écoute Telegram"""
+    """Service de connexion et d'écoute Telegram - Connexion par lien"""
     
     def __init__(self):
         self.client: Optional[TelegramClient] = None
@@ -26,7 +27,6 @@ class TelegramService:
         self.phone = os.getenv("TELEGRAM_PHONE", "")
         self.channel = os.getenv("TELEGRAM_CHANNEL", "")
         
-        # Utiliser la session existante
         self.session_name = "session/telegram_render"
         logger.info(f"📁 Session: {self.session_name}")
     
@@ -59,46 +59,88 @@ class TelegramService:
         return channels
     
     async def connect(self) -> bool:
-        """Se connecter à Telegram en utilisant la session existante SANS envoyer de code"""
+        """Se connecter à Telegram - Génère un lien de connexion"""
         try:
             if not self.api_id or not self.api_hash:
                 logger.error("❌ Telegram API_ID ou API_HASH manquant")
                 return False
             
-            # Créer le dossier session
             os.makedirs("session", exist_ok=True)
             
-            # Vérifier si la session existe
+            # Vérifier si la session existe déjà
             session_file = f"{self.session_name}.session"
             if os.path.exists(session_file):
-                logger.info(f"✅ Session trouvée: {session_file}")
-            else:
-                logger.error(f"❌ Session non trouvée: {session_file}")
-                logger.info("   Créez la session avec: python create_session.py")
-                return False
+                logger.info(f"✅ Session existante trouvée: {session_file}")
+                logger.info("🔄 Connexion automatique...")
+                
+                self.client = TelegramClient(self.session_name, self.api_id, self.api_hash)
+                await self.client.connect()
+                
+                if await self.client.is_user_authorized():
+                    self.is_connected = True
+                    me = await self.client.get_me()
+                    logger.info(f"✅ Connecté en tant que: {me.first_name} (@{me.username})")
+                    return True
+                else:
+                    logger.warning("⚠️ Session existante mais invalide, suppression...")
+                    os.remove(session_file)
             
-            # Créer le client avec la session
+            # Pas de session valide -> Connexion par lien
+            print("=" * 60)
+            print("🔐 CONNEXION TELEGRAM")
+            print("=" * 60)
+            print("📱 Ouvrez le lien ci-dessous sur votre téléphone")
+            print("   ou scannez le QR code avec Telegram")
+            print("=" * 60)
+            print()
+            
             self.client = TelegramClient(self.session_name, self.api_id, self.api_hash)
             
-            logger.info("🔄 Connexion à Telegram...")
-            
-            # Connexion SANS start() pour éviter l'envoi de code
+            # Démarrer la connexion avec demande de code
             await self.client.connect()
             
-            # Vérifier si la session est valide
-            if not await self.client.is_user_authorized():
-                logger.error("❌ Session invalide ou expirée")
-                logger.info("   Recréez la session avec: python create_session.py")
-                await self.client.disconnect()
+            # Envoyer la demande de code
+            try:
+                await self.client.send_code_request(self.phone)
+                print("📲 Code envoyé à votre Telegram/SMS")
+                print()
+                
+                # Demander le code à l'utilisateur
+                code = input("🔑 Entrez le code de vérification: ")
+                
+                # Tentative de connexion avec le code
+                await self.client.sign_in(self.phone, code)
+                
+                # Si 2FA est activé
+                if not await self.client.is_user_authorized():
+                    password = input("🔐 Mot de passe 2FA: ")
+                    await self.client.sign_in(password=password)
+                
+                self.is_connected = True
+                me = await self.client.get_me()
+                
+                print()
+                print("=" * 60)
+                print("✅ CONNEXION RÉUSSIE !")
+                print(f"👤 Nom: {me.first_name} (@{me.username})")
+                print(f"🆔 ID: {me.id}")
+                print(f"📁 Session sauvegardée: {session_file}")
+                print("=" * 60)
+                print()
+                print("📌 La session est sauvegardée.")
+                print("   Prochains démarrages: connexion automatique !")
+                
+                return True
+                
+            except Exception as e:
+                print()
+                print(f"❌ Erreur: {e}")
+                print()
+                print("💡 Solutions:")
+                print("   1. Vérifiez que vous avez bien reçu le code")
+                print("   2. Réessayez avec un nouveau code")
+                print("   3. Vérifiez vos identifiants sur https://my.telegram.org/apps")
                 return False
-            
-            self.is_connected = True
-            
-            # Récupérer les infos
-            me = await self.client.get_me()
-            logger.info(f"✅ Connecté en tant que: {me.first_name} (@{me.username})")
-            logger.info(f"🆔 ID: {me.id}")
-            return True
             
         except Exception as e:
             logger.error(f"❌ Telegram connection error: {e}")
@@ -250,43 +292,3 @@ class TelegramService:
         except Exception as e:
             logger.error(f"❌ Erreur envoi test: {e}")
             return False
-    
-    async def get_recent_messages(self, channel: str = None, limit: int = 10) -> List[Message]:
-        """Récupérer les derniers messages d'un canal"""
-        try:
-            target = channel or self.channel
-            if not target:
-                logger.error("❌ Aucun canal cible")
-                return []
-            
-            messages = []
-            async for message in self.client.iter_messages(target, limit=limit):
-                messages.append(message)
-            
-            logger.info(f"📥 {len(messages)} messages récupérés de {target}")
-            return messages
-            
-        except Exception as e:
-            logger.error(f"❌ Erreur récupération messages: {e}")
-            return []
-    
-    async def list_joined_channels(self) -> List[dict]:
-        """Liste tous les canaux où le bot est membre"""
-        try:
-            logger.info("📡 Récupération de la liste des canaux...")
-            dialogs = await self.client.get_dialogs()
-            channels = []
-            for dialog in dialogs:
-                if dialog.is_channel:
-                    channels.append({
-                        "name": dialog.name,
-                        "username": dialog.entity.username,
-                        "id": dialog.id,
-                    })
-            logger.info(f"📡 Canaux disponibles: {len(channels)}")
-            for ch in channels:
-                logger.info(f"   - {ch['name']} (@{ch['username']})")
-            return channels
-        except Exception as e:
-            logger.error(f"❌ Erreur liste canaux: {e}")
-            return []
