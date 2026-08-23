@@ -4,7 +4,7 @@ python-multipart==0.0.6
 pydantic==1.10.13
 python-dotenv==1.0.0
 sqlalchemy==2.0.23
-telethon==1.28.5
+telethon==1.36.0
 python-telegram-bot==20.6
 requests==2.31.0
 sendgrid==6.10.0
