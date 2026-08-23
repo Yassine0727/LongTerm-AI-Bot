@@ -6,12 +6,11 @@ from typing import Optional, Callable, List
 
 from telethon import TelegramClient, events
 from telethon.tl.types import Message
-from telethon.tl.functions.auth import RequestPasswordRecoveryRequest
 
 logger = logging.getLogger(__name__)
 
 class TelegramService:
-    """Service de connexion et d'écoute Telegram - Connexion par lien"""
+    """Service de connexion et d'écoute Telegram"""
     
     def __init__(self):
         self.client: Optional[TelegramClient] = None
@@ -59,7 +58,7 @@ class TelegramService:
         return channels
     
     async def connect(self) -> bool:
-        """Se connecter à Telegram - Génère un lien de connexion"""
+        """Se connecter à Telegram - Utilise la session existante SANS envoyer de code"""
         try:
             if not self.api_id or not self.api_hash:
                 logger.error("❌ Telegram API_ID ou API_HASH manquant")
@@ -67,80 +66,40 @@ class TelegramService:
             
             os.makedirs("session", exist_ok=True)
             
-            # Vérifier si la session existe déjà
+            # Vérifier si la session existe
             session_file = f"{self.session_name}.session"
-            if os.path.exists(session_file):
-                logger.info(f"✅ Session existante trouvée: {session_file}")
-                logger.info("🔄 Connexion automatique...")
-                
-                self.client = TelegramClient(self.session_name, self.api_id, self.api_hash)
-                await self.client.connect()
-                
-                if await self.client.is_user_authorized():
-                    self.is_connected = True
-                    me = await self.client.get_me()
-                    logger.info(f"✅ Connecté en tant que: {me.first_name} (@{me.username})")
-                    return True
-                else:
-                    logger.warning("⚠️ Session existante mais invalide, suppression...")
-                    os.remove(session_file)
+            if not os.path.exists(session_file):
+                logger.error(f"❌ Session non trouvée: {session_file}")
+                logger.info("   Créez la session avec: python connect_telegram.py")
+                return False
             
-            # Pas de session valide -> Connexion par lien
-            print("=" * 60)
-            print("🔐 CONNEXION TELEGRAM")
-            print("=" * 60)
-            print("📱 Ouvrez le lien ci-dessous sur votre téléphone")
-            print("   ou scannez le QR code avec Telegram")
-            print("=" * 60)
-            print()
+            logger.info(f"✅ Session trouvée: {session_file}")
             
+            # Vérifier la version de Telethon
+            import telethon
+            logger.info(f"📱 Telethon version: {telethon.__version__}")
+            
+            # Créer le client avec la session
             self.client = TelegramClient(self.session_name, self.api_id, self.api_hash)
             
-            # Démarrer la connexion avec demande de code
+            logger.info("🔄 Connexion à Telegram...")
+            
+            # Connexion SANS start() pour éviter l'envoi de code
             await self.client.connect()
             
-            # Envoyer la demande de code
-            try:
-                await self.client.send_code_request(self.phone)
-                print("📲 Code envoyé à votre Telegram/SMS")
-                print()
-                
-                # Demander le code à l'utilisateur
-                code = input("🔑 Entrez le code de vérification: ")
-                
-                # Tentative de connexion avec le code
-                await self.client.sign_in(self.phone, code)
-                
-                # Si 2FA est activé
-                if not await self.client.is_user_authorized():
-                    password = input("🔐 Mot de passe 2FA: ")
-                    await self.client.sign_in(password=password)
-                
-                self.is_connected = True
-                me = await self.client.get_me()
-                
-                print()
-                print("=" * 60)
-                print("✅ CONNEXION RÉUSSIE !")
-                print(f"👤 Nom: {me.first_name} (@{me.username})")
-                print(f"🆔 ID: {me.id}")
-                print(f"📁 Session sauvegardée: {session_file}")
-                print("=" * 60)
-                print()
-                print("📌 La session est sauvegardée.")
-                print("   Prochains démarrages: connexion automatique !")
-                
-                return True
-                
-            except Exception as e:
-                print()
-                print(f"❌ Erreur: {e}")
-                print()
-                print("💡 Solutions:")
-                print("   1. Vérifiez que vous avez bien reçu le code")
-                print("   2. Réessayez avec un nouveau code")
-                print("   3. Vérifiez vos identifiants sur https://my.telegram.org/apps")
+            # Vérifier si la session est valide
+            if not await self.client.is_user_authorized():
+                logger.error("❌ Session invalide ou expirée")
+                await self.client.disconnect()
                 return False
+            
+            self.is_connected = True
+            
+            # Récupérer les informations
+            me = await self.client.get_me()
+            logger.info(f"✅ Connecté en tant que: {me.first_name} (@{me.username})")
+            logger.info(f"🆔 ID: {me.id}")
+            return True
             
         except Exception as e:
             logger.error(f"❌ Telegram connection error: {e}")
