@@ -2,19 +2,20 @@
 import asyncio
 import os
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
 
-# ===== MODIFIEZ CES 3 LIGNES =====
-API_ID = 38955597  # METTEZ VOTRE API_ID
-API_HASH = "275fbac1b68e0984459d044b9b1a20cf"  # METTEZ VOTRE API_HASH
-PHONE = "+21699038382"
+# ===== CONFIGURATION =====
+API_ID = 38955597  # METTEZ VOTRE API_ID ICI
+API_HASH = "275fbac1b68e0984459d044b9b1a20cf"  # METTEZ VOTRE API_HASH ICI
+PHONE = "+21699038382"  # VOTRE NUMERO
 
 async def main():
     print("=" * 60)
     print("🔐 CONNEXION TELEGRAM")
     print("=" * 60)
+    print(f"📞 Numéro: {PHONE}")
+    print("=" * 60)
     
-    # Vérifier la version
+    # Vérifier la version de Telethon
     import telethon
     print(f"📱 Telethon version: {telethon.__version__}")
     print("=" * 60)
@@ -30,18 +31,20 @@ async def main():
     
     try:
         print("🔄 Connexion...")
+        
+        # Connexion sans start() pour éviter l'erreur
         await client.connect()
         
         if not await client.is_user_authorized():
             print("📲 Demande de code...")
             await client.send_code_request(PHONE)
-            code = input("🔑 Entrez le code: ")
+            code = input("🔑 Entrez le code reçu: ")
             
             try:
                 await client.sign_in(PHONE, code)
-            except SessionPasswordNeededError:
-                password = input("🔐 Mot de passe 2FA: ")
-                await client.sign_in(password=password)
+            except Exception as e:
+                print(f"❌ Erreur: {e}")
+                return
         
         me = await client.get_me()
         print()
