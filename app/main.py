@@ -15,11 +15,15 @@ from datetime import datetime
 
 from app.api.routes import router
 from app.history_page import router as history_router
+from app.services.ai_service import AIService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="LongTerm AI Bot", version="3.0")
+
+# ===== CRÉATION DU DOSSIER DATA =====
+os.makedirs("data", exist_ok=True)
 
 # ===== CORS CONFIGURATION SÉCURISÉE =====
 app.add_middleware(
@@ -196,10 +200,19 @@ except ImportError as e:
     logger.error(f"❌ TelegramService non trouvé: {e}")
     logger.error("   Créez le fichier app/services/telegram_service.py")
 
+# ============================================
+# INITIALISATION DES SERVICES
+# ============================================
+
+ai_service = AIService()
+
 # ===== VARIABLES GLOBALES TELEGRAM =====
 telegram_service = None
 telegram_task = None
 telegram_running = False
+total_analyses = 0
+total_alerts = 0
+total_reports = 0
 
 def get_telegram_service():
     """Récupère ou crée l'instance du service Telegram"""
@@ -481,6 +494,8 @@ async def handle_telegram_message(text: str, message_id: str, date):
 
 async def handle_telegram_command(text: str, message_id: str):
     """Traite les commandes Telegram"""
+    global total_reports
+    
     try:
         command = text.strip().lower()
         service = get_telegram_service()
@@ -490,7 +505,7 @@ async def handle_telegram_command(text: str, message_id: str):
         
         channel = config_data.get("telegram", {}).get("channel")
         if not channel:
-            channel = os.getenv("TELEGRAM_CHANNEL", "@default")
+            channel = os.getenv("TELEGRAM_CHANNEL", "@Trading_longterme_bot")
         
         logger.info(f"📟 Commande reçue: {command}")
         
@@ -515,7 +530,10 @@ async def handle_telegram_command(text: str, message_id: str):
                 f"📊 **État du bot**\n\n"
                 f"Statut : {status}\n"
                 f"Canaux écoutés : {len(service.channel_handlers) if hasattr(service, 'channel_handlers') else 0}\n"
-                f"Messages traités : {len(service.processed_messages) if hasattr(service, 'processed_messages') else 0}"
+                f"Messages traités : {len(service.processed_messages) if hasattr(service, 'processed_messages') else 0}\n"
+                f"📈 Analyses totales : {total_analyses}\n"
+                f"🔔 Alertes : {total_alerts}\n"
+                f"📊 Rapports : {total_reports}"
             )
             logger.info("✅ Commande /status envoyée")
             
@@ -541,11 +559,25 @@ async def handle_telegram_command(text: str, message_id: str):
             logger.info("✅ Commande /portfolio envoyée")
             
         elif command == '/analyze':
+            total_reports += 1
             await service.client.send_message(
                 channel,
-                "🔍 **Analyse des marchés en cours...**"
+                "🔍 **Analyse des marchés en cours...**\n\n"
+                f"📊 Rapports générés : {total_reports}"
             )
             logger.info("✅ Commande /analyze envoyée")
+            
+        elif command == '/weekly_report':
+            total_reports += 1
+            await service.client.send_message(
+                channel,
+                f"📊 **Rapport Hebdomadaire**\n\n"
+                f"📈 Analyses totales : {total_analyses}\n"
+                f"🔔 Alertes : {total_alerts}\n"
+                f"📊 Rapports générés : {total_reports}\n\n"
+                f"✅ Bot actif 24h/7j"
+            )
+            logger.info("✅ Commande /weekly_report envoyée")
             
         elif command == '/help':
             await service.client.send_message(
@@ -557,6 +589,7 @@ async def handle_telegram_command(text: str, message_id: str):
                 "• `/prices` - Prix des actifs\n"
                 "• `/portfolio` - Voir le portefeuille\n"
                 "• `/analyze` - Analyser les marchés\n"
+                "• `/weekly_report` - Rapport hebdomadaire\n"
                 "• `/help` - Aide"
             )
             logger.info("✅ Commande /help envoyée")
@@ -572,11 +605,77 @@ async def handle_telegram_command(text: str, message_id: str):
         logger.error(f"❌ Erreur commande: {e}")
 
 async def process_market_analysis(text: str, message_id: str, date):
-    """Traite les messages comme des analyses de marché"""
+    """Traite les messages comme des analyses de marché et envoie des notifications"""
+    global total_analyses, total_alerts
+    
     try:
         logger.info(f"📊 Analyse du message: {text[:100]}...")
-        # Ici vous pouvez appeler votre AI service
+        
+        total_analyses += 1
+        logger.info(f"📊 Total analyses: {total_analyses}")
+        
+        # === ANALYSE AVEC DEEPSEEK ===
+        try:
+            result = await ai_service.analyze(text)
+            logger.info(f"🔍 Résultat DeepSeek: {result}")
+        except Exception as e:
+            logger.error(f"❌ Erreur DeepSeek: {e}")
+            result = None
+        
+        # === ENVOYER LA NOTIFICATION ===
+        service = get_telegram_service()
+        if service and service.is_connected:
+            # === UTILISER LE MÊME CANAL QUE WEEKLY_REPORT ===
+            channel = config_data.get("telegram", {}).get("channel")
+            if not channel:
+                channel = os.getenv("TELEGRAM_CHANNEL", "@Trading_longterme_bot")
+            
+            logger.info(f"📤 Envoi de la notification à {channel}")
+            
+            # Construire le message
+            if result and result.get("success"):
+                analysis = result.get("analysis", {})
+                score = analysis.get("score", 0)
+                if score >= 7:
+                    total_alerts += 1
+                
+                emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
+                message = f"""{emoji} **Analyse LongTerm AI**
+
+**Actif:** {analysis.get('asset', 'OTHER')}
+**Impact:** {analysis.get('impact', 'neutral')} (Score: {score}/10)
+**Horizon:** {analysis.get('time_horizon', 'medium_term')}
+**Confiance:** {analysis.get('confidence', 'medium')}
+
+**Résumé:**
+{analysis.get('summary', '') or analysis.get('reason', '')}
+
+**Analyse détaillée:**
+{analysis.get('detailed_analysis', '')}
+
+**Impact par actif:**
+• **BTC:** {analysis.get('btc_impact', 'Non spécifié')}
+• **ETH:** {analysis.get('eth_impact', 'Non spécifié')}
+• **GOLD:** {analysis.get('gold_impact', 'Non spécifié')}
+
+{f'**Comparaison historique:** {analysis.get("historical_comparison", "")}' if analysis.get('historical_comparison') else ''}"""
+            else:
+                # Notification simple si DeepSeek échoue
+                message = f"""📩 **Nouveau message analysé**
+
+**ID:** {message_id}
+**Contenu:** {text[:200]}...
+
+⚠️ Analyse détaillée non disponible - Notification de secours"""
+            
+            # Envoyer au même canal que weekly_report
+            await service.client.send_message(channel, message)
+            logger.info(f"✅ Notification envoyée à {channel}")
+        else:
+            logger.error("❌ Service Telegram non connecté")
+        
         logger.info(f"✅ Message analysé - ID: {message_id}")
+        
     except Exception as e:
         logger.error(f"❌ Erreur analyse: {e}")
 
@@ -674,6 +773,12 @@ async def startup_event():
         logger.warning("⚠️ Aucun canal Telegram configuré")
         logger.warning("   Ajoutez des canaux dans config.json")
     
+    # Vérifier DeepSeek
+    if os.getenv("DEEPSEEK_API_KEY"):
+        logger.info("✅ DeepSeek API configurée")
+    else:
+        logger.warning("⚠️ DeepSeek API non configurée")
+    
     # Démarrer Telegram
     logger.info("🔄 Démarrage du service Telegram...")
     success = await start_telegram_service()
@@ -744,7 +849,7 @@ async def send_test_message():
         
         channel = config_data.get("telegram", {}).get("channel")
         if not channel:
-            channel = os.getenv("TELEGRAM_CHANNEL", "@default")
+            channel = os.getenv("TELEGRAM_CHANNEL", "@Trading_longterme_bot")
         
         await service.client.send_message(
             channel,
@@ -971,6 +1076,8 @@ async def update_bot_status():
 @app.get("/api/status")
 async def get_status():
     """Retourne le statut complet du bot"""
+    global total_analyses, total_alerts, total_reports
+    
     try:
         config = load_config()
         
@@ -991,7 +1098,9 @@ async def get_status():
                 })
             },
             "stats": {
-                "total_analyzed": 0,
+                "total_analyzed": total_analyses,
+                "total_alerts": total_alerts,
+                "total_reports": total_reports,
                 "last_update": datetime.now().isoformat()
             }
         }
@@ -1035,6 +1144,8 @@ async def export_data():
 @app.post("/api/reset")
 async def reset_bot():
     """Réinitialise le bot"""
+    global total_analyses, total_alerts, total_reports
+    
     try:
         # Arrêter Telegram
         await stop_telegram_service()
@@ -1057,6 +1168,10 @@ async def reset_bot():
             }
         }
         save_config(default_config)
+        
+        total_analyses = 0
+        total_alerts = 0
+        total_reports = 0
         
         # Redémarrer
         await start_telegram_service()
@@ -1700,6 +1815,8 @@ async function updateStatus() {
     document.getElementById('lastUpdate').textContent = 'Last update: ' + new Date().toLocaleTimeString();
     if (data.stats) {
         document.getElementById('statsAnalyses').textContent = data.stats.total_analyzed || 0;
+        document.getElementById('statsAlerts').textContent = data.stats.total_alerts || 0;
+        document.getElementById('statsReports').textContent = data.stats.total_reports || 0;
     }
     if (data.telegram) {
         document.getElementById('telegramStatusLabel').textContent = data.telegram.connected ? '✅ Connecté' : '❌ Déconnecté';
@@ -2526,7 +2643,6 @@ async def web_interface(request: Request):
 
 @app.get("/")
 async def home(request: Request):
-    # Vérifier si l'utilisateur a un cookie d'authentification
     auth_cookie = request.cookies.get("auth")
     if auth_cookie:
         try:
@@ -2537,16 +2653,13 @@ async def home(request: Request):
         except:
             pass
     
-    # Vérifier l'en-tête d'authentification
     if check_auth_header(request):
         return HTMLResponse(MAIN_PAGE)
     
-    # Si pas authentifié, afficher le dashboard quand même (accès public)
     return HTMLResponse(MAIN_PAGE)
 
 @app.get("/settings")
 async def settings_page(request: Request):
-    # Accès public au settings
     auth_cookie = request.cookies.get("auth")
     if auth_cookie:
         try:
@@ -2560,7 +2673,6 @@ async def settings_page(request: Request):
     if check_auth_header(request):
         return HTMLResponse(SETTINGS_PAGE)
     
-    # Accès public
     return HTMLResponse(SETTINGS_PAGE)
 
 @app.get("/history")
