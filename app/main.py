@@ -25,81 +25,118 @@ app = FastAPI(title="LongTerm AI Bot", version="3.0")
 # ===== CRÉATION DU DOSSIER DATA =====
 os.makedirs("data", exist_ok=True)
 
-# ===== INITIALISATION DE L'HISTORIQUE =====
-def init_history_file():
-    """Crée le fichier d'historique s'il n'existe pas"""
-    history_file = "data/analyses_history.json"
-    if not os.path.exists(history_file):
-        try:
-            os.makedirs("data", exist_ok=True)
+# ===== INITIALISATION DES FICHIERS =====
+def init_data_files():
+    """Initialise les fichiers de données s'ils n'existent pas"""
+    try:
+        # analyses_history.json
+        history_file = "data/analyses_history.json"
+        if not os.path.exists(history_file):
             with open(history_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, indent=2, ensure_ascii=False)
-            logger.info("✅ Fichier d'historique créé: data/analyses_history.json")
-        except Exception as e:
-            logger.error(f"❌ Erreur création historique: {e}")
+            logger.info("✅ Fichier analyses_history.json créé")
+        
+        # stats.json
+        stats_file = "data/stats.json"
+        if not os.path.exists(stats_file):
+            default_stats = {
+                "total_analyses": 0,
+                "total_alerts": 0,
+                "total_reports": 0,
+                "last_update": datetime.now().isoformat()
+            }
+            with open(stats_file, 'w', encoding='utf-8') as f:
+                json.dump(default_stats, f, indent=2, ensure_ascii=False)
+            logger.info("✅ Fichier stats.json créé")
+        
+        return True
+    except Exception as e:
+        logger.error(f"❌ Erreur création fichiers: {e}")
+        return False
 
-# Initialiser l'historique
-init_history_file()
+# Appeler au démarrage
+init_data_files()
 
-# ===== FICHIER DE STATISTIQUES =====
-STATS_FILE = "data/stats.json"
+# ===== FONCTIONS DE LECTURE/ÉCRITURE =====
 
 def load_stats():
+    """Charge les statistiques depuis stats.json"""
+    stats_file = "data/stats.json"
     default_stats = {
         "total_analyses": 0,
         "total_alerts": 0,
         "total_reports": 0,
         "last_update": datetime.now().isoformat()
     }
-    if os.path.exists(STATS_FILE):
+    
+    if os.path.exists(stats_file):
         try:
-            with open(STATS_FILE, 'r', encoding='utf-8') as f:
+            with open(stats_file, 'r', encoding='utf-8') as f:
                 stats = json.load(f)
+                # S'assurer que toutes les clés existent
                 for key in default_stats:
                     if key not in stats:
                         stats[key] = default_stats[key]
                 return stats
         except Exception as e:
-            logger.error(f"❌ Erreur lecture stats: {e}")
+            logger.error(f"❌ Erreur lecture stats.json: {e}")
             return default_stats
+    
     return default_stats
 
 def save_stats(stats):
+    """Sauvegarde les statistiques dans stats.json"""
     try:
-        os.makedirs("data", exist_ok=True)
-        with open(STATS_FILE, 'w', encoding='utf-8') as f:
+        with open("data/stats.json", 'w', encoding='utf-8') as f:
             json.dump(stats, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
-        logger.error(f"❌ Erreur sauvegarde stats: {e}")
+        logger.error(f"❌ Erreur sauvegarde stats.json: {e}")
         return False
 
-async def save_analysis_history(analysis_data: dict):
-    try:
-        history_file = "data/analyses_history.json"
-        os.makedirs("data", exist_ok=True)
-        
-        history = []
-        if os.path.exists(history_file):
+def load_history():
+    """Charge l'historique des analyses"""
+    history_file = "data/analyses_history.json"
+    if os.path.exists(history_file):
+        try:
             with open(history_file, 'r', encoding='utf-8') as f:
-                history = json.load(f)
-        
-        history.append(analysis_data)
-        if len(history) > 100:
-            history = history[-100:]
-        
-        with open(history_file, 'w', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"❌ Erreur lecture historique: {e}")
+            return []
+    return []
+
+def save_history(history):
+    """Sauvegarde l'historique des analyses"""
+    try:
+        with open("data/analyses_history.json", 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
-        logger.info(f"✅ Analyse sauvegardée dans l'historique - Total: {len(history)}")
-        
+        return True
     except Exception as e:
         logger.error(f"❌ Erreur sauvegarde historique: {e}")
+        return False
 
-# Charger les stats au démarrage
+def add_analysis_to_history(analysis_data):
+    """Ajoute une analyse à l'historique"""
+    try:
+        history = load_history()
+        history.append(analysis_data)
+        # Garder seulement les 100 dernières
+        if len(history) > 100:
+            history = history[-100:]
+        return save_history(history)
+    except Exception as e:
+        logger.error(f"❌ Erreur ajout historique: {e}")
+        return False
+
+# ===== CHARGER LES STATS AU DÉMARRAGE =====
 stats_data = load_stats()
 total_analyses = stats_data.get("total_analyses", 0)
 total_alerts = stats_data.get("total_alerts", 0)
 total_reports = stats_data.get("total_reports", 0)
+
+logger.info(f"📊 Statistiques chargées: Analyses={total_analyses}, Alertes={total_alerts}, Reports={total_reports}")
+logger.info(f"📊 Historique chargé: {len(load_history())} analyses")
 
 # ===== CORS CONFIGURATION SÉCURISÉE =====
 app.add_middleware(
@@ -132,18 +169,14 @@ SECRET_KEY = "votre_cle_secrete_tres_longue_et_aleatoire"
 async def auth_middleware(request: Request, call_next):
     """Middleware simplifié - sans redirection vers login"""
     
-    # Routes publiques (sans authentification)
     public_routes = ["/api/ping", "/telegram-login", "/", "/settings", "/history", "/web"]
     
-    # Si route publique -> laisser passer
     if request.url.path in public_routes:
         return await call_next(request)
     
-    # Si route publique commençant par /api/telegram/auth
     if request.url.path.startswith("/api/telegram/auth"):
         return await call_next(request)
     
-    # Pour les routes API -> vérifier l'authentification
     if request.url.path.startswith("/api/"):
         auth_header = request.headers.get("authorization")
         if not auth_header:
@@ -170,7 +203,6 @@ async def auth_middleware(request: Request, call_next):
                 content={"detail": "Format d'authentification invalide", "error": "Unauthorized"}
             )
     
-    # Pour les pages HTML -> laisser passer
     return await call_next(request)
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
@@ -201,7 +233,6 @@ def check_auth_header(request: Request):
 # ===== ROUTE PUBLIQUE POUR UPTIME ROBOT =====
 @app.api_route("/api/ping", methods=["GET", "HEAD"])
 async def ping(request: Request):
-    """Route publique pour les services de monitoring (Uptime Robot)"""
     if request.method == "HEAD":
         return Response(status_code=200)
     return {
@@ -218,7 +249,6 @@ async def ping(request: Request):
 CONFIG_FILE = "config.json"
 
 def load_config():
-    """Charge la configuration depuis config.json"""
     default_config = {
         "price_interval": 30,
         "alert_threshold": 5,
@@ -251,7 +281,6 @@ def load_config():
     return default_config
 
 def save_config(config):
-    """Sauvegarde la configuration dans config.json"""
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
@@ -260,7 +289,6 @@ def save_config(config):
         logger.error(f"❌ Erreur sauvegarde config.json: {e}")
         return False
 
-# Charger la config au démarrage
 config_data = load_config()
 
 # ============================================
@@ -274,7 +302,6 @@ try:
 except ImportError as e:
     TELEGRAM_AVAILABLE = False
     logger.error(f"❌ TelegramService non trouvé: {e}")
-    logger.error("   Créez le fichier app/services/telegram_service.py")
 
 # ============================================
 # INITIALISATION DES SERVICES
@@ -282,13 +309,11 @@ except ImportError as e:
 
 ai_service = AIService()
 
-# ===== VARIABLES GLOBALES TELEGRAM =====
 telegram_service = None
 telegram_task = None
 telegram_running = False
 
 def get_telegram_service():
-    """Récupère ou crée l'instance du service Telegram"""
     global telegram_service
     if telegram_service is None and TELEGRAM_AVAILABLE:
         telegram_service = TelegramService()
@@ -296,90 +321,39 @@ def get_telegram_service():
     return telegram_service
 
 # ============================================
-# AUTHENTIFICATION TELEGRAM VIA WEB (BOUTON)
+# AUTHENTIFICATION TELEGRAM VIA WEB
 # ============================================
 
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
-# Variables globales pour l'authentification
 telegram_auth_client = None
 telegram_auth_phone = None
 
-# ===== PAGE DE CONNEXION TELEGRAM (PUBLIQUE) =====
 @app.get("/telegram-login")
 async def telegram_login_page():
-    """Page de connexion Telegram - accessible sans authentification"""
     html = '''
     <!DOCTYPE html>
     <html>
     <head>
         <title>Connexion Telegram</title>
         <style>
-            body {
-                background: #0a0a0a;
-                color: #e5e5e5;
-                font-family: Arial, sans-serif;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                min-height: 100vh;
-                margin: 0;
-            }
-            .container {
-                background: #1a1a1a;
-                padding: 40px;
-                border-radius: 16px;
-                border: 1px solid #333;
-                max-width: 400px;
-                width: 100%;
-                text-align: center;
-            }
+            body { background: #0a0a0a; color: #e5e5e5; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+            .container { background: #1a1a1a; padding: 40px; border-radius: 16px; border: 1px solid #333; max-width: 400px; width: 100%; text-align: center; }
             h1 { color: #f7931a; margin-bottom: 10px; }
             .subtitle { color: #888; font-size: 14px; margin-bottom: 30px; }
-            .btn-telegram {
-                background: #0088cc;
-                color: white;
-                border: none;
-                padding: 14px 30px;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: bold;
-                cursor: pointer;
-                width: 100%;
-                transition: all 0.3s;
-            }
+            .btn-telegram { background: #0088cc; color: white; border: none; padding: 14px 30px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; width: 100%; transition: all 0.3s; }
             .btn-telegram:hover { background: #006699; transform: scale(1.02); }
             .btn-telegram:disabled { opacity: 0.5; cursor: not-allowed; }
             .input-group { margin: 15px 0; display: none; }
             .input-group.show { display: block; }
-            .input-group input {
-                width: 100%;
-                padding: 12px;
-                border-radius: 8px;
-                border: 1px solid #333;
-                background: #0a0a0a;
-                color: white;
-                font-size: 16px;
-                text-align: center;
-            }
+            .input-group input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #333; background: #0a0a0a; color: white; font-size: 16px; text-align: center; }
             .input-group input:focus { outline: none; border-color: #f7931a; }
-            .status {
-                margin-top: 15px;
-                padding: 10px;
-                border-radius: 8px;
-                font-size: 14px;
-            }
+            .status { margin-top: 15px; padding: 10px; border-radius: 8px; font-size: 14px; }
             .status.success { background: #064e3b; color: #34d399; }
             .status.error { background: #4a1a1a; color: #f87171; }
             .status.info { background: #1a2a4a; color: #60a5fa; }
-            .back-link {
-                display: block;
-                margin-top: 20px;
-                color: #888;
-                text-decoration: none;
-                font-size: 14px;
-            }
+            .back-link { display: block; margin-top: 20px; color: #888; text-decoration: none; font-size: 14px; }
             .back-link:hover { color: #f7931a; }
         </style>
     </head>
@@ -387,39 +361,24 @@ async def telegram_login_page():
         <div class="container">
             <h1>🔐 Telegram</h1>
             <p class="subtitle">Connectez votre compte Telegram</p>
-            
-            <button class="btn-telegram" onclick="startAuth()" id="btnStart">
-                📱 Se connecter avec Telegram
-            </button>
-            
+            <button class="btn-telegram" onclick="startAuth()" id="btnStart">📱 Se connecter avec Telegram</button>
             <div class="input-group" id="codeGroup">
                 <p style="color:#888;font-size:14px;">Code reçu sur Telegram</p>
                 <input type="text" id="codeInput" placeholder="Ex: 12345" maxlength="10">
-                <button class="btn-telegram" onclick="submitCode()" style="margin-top:10px;background:#f7931a;">
-                    ✅ Valider le code
-                </button>
+                <button class="btn-telegram" onclick="submitCode()" style="margin-top:10px;background:#f7931a;">✅ Valider le code</button>
             </div>
-            
             <div id="status"></div>
-            
             <a href="/" class="back-link">← Retour au Dashboard</a>
         </div>
-
         <script>
             async function startAuth() {
                 const btn = document.getElementById('btnStart');
                 const status = document.getElementById('status');
-                
                 btn.disabled = true;
                 btn.textContent = '⏳ Envoi du code...';
-                
                 try {
-                    const response = await fetch('/api/telegram/auth/start', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' }
-                    });
+                    const response = await fetch('/api/telegram/auth/start', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
                     const data = await response.json();
-                    
                     if (data.success) {
                         status.className = 'status info';
                         status.textContent = '✅ Code envoyé ! Vérifiez Telegram';
@@ -439,38 +398,26 @@ async def telegram_login_page():
                     btn.disabled = false;
                 }
             }
-            
             async function submitCode() {
                 const code = document.getElementById('codeInput').value;
                 const status = document.getElementById('status');
                 const btn = document.querySelector('.btn-telegram[onclick="submitCode()"]');
-                
                 if (!code) {
                     status.className = 'status error';
                     status.textContent = '❌ Entrez le code reçu';
                     return;
                 }
-                
                 btn.disabled = true;
                 btn.textContent = '⏳ Connexion...';
-                
                 try {
-                    const response = await fetch('/api/telegram/auth/verify', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code: code })
-                    });
+                    const response = await fetch('/api/telegram/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code }) });
                     const data = await response.json();
-                    
                     if (data.success) {
                         status.className = 'status success';
                         status.textContent = '✅ ' + data.message + ' 🎉';
                         document.getElementById('codeGroup').classList.remove('show');
                         btn.textContent = '✅ Connecté !';
-                        
-                        setTimeout(() => {
-                            window.location.href = '/';
-                        }, 2000);
+                        setTimeout(() => { window.location.href = '/'; }, 2000);
                     } else {
                         status.className = 'status error';
                         status.textContent = '❌ ' + data.error;
@@ -492,57 +439,35 @@ async def telegram_login_page():
 
 @app.post("/api/telegram/auth/start")
 async def telegram_auth_start():
-    """Démarre l'authentification Telegram"""
     global telegram_auth_client, telegram_auth_phone
-    
     try:
         service = get_telegram_service()
         if not service:
             return {"success": False, "error": "Service non disponible"}
-        
-        # Créer le client pour l'authentification
-        telegram_auth_client = TelegramClient(
-            "session/telegram_render",
-            service.api_id,
-            service.api_hash
-        )
+        telegram_auth_client = TelegramClient("session/telegram_render", service.api_id, service.api_hash)
         telegram_auth_phone = service.phone
-        
         await telegram_auth_client.connect()
         await telegram_auth_client.send_code_request(telegram_auth_phone)
-        
         return {"success": True, "message": "Code envoyé !"}
-        
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/telegram/auth/verify")
 async def telegram_auth_verify(data: dict):
-    """Vérifie le code Telegram"""
     global telegram_auth_client, telegram_auth_phone
-    
     try:
         code = data.get("code", "").strip()
         if not code:
             return {"success": False, "error": "Code requis"}
-        
         if telegram_auth_client is None:
             return {"success": False, "error": "Session expirée, recommencez"}
-        
-        # Vérifier le code
         await telegram_auth_client.sign_in(telegram_auth_phone, code)
-        
-        # Sauvegarder la session
         await telegram_auth_client.disconnect()
-        
-        # Redémarrer le service pour utiliser la nouvelle session
-        logger.info("🔄 Redémarrage du service Telegram avec la nouvelle session...")
+        logger.info("🔄 Redémarrage du service Telegram...")
         await stop_telegram_service()
         await start_telegram_service()
-        
         return {"success": True, "message": "Connexion réussie ! Bot redémarré"}
-        
     except SessionPasswordNeededError:
         return {"success": False, "error": "Mot de passe 2FA requis"}
     except Exception as e:
@@ -552,7 +477,6 @@ async def telegram_auth_verify(data: dict):
 # ===== GESTIONNAIRES DE MESSAGES =====
 
 async def handle_telegram_message(text: str, message_id: str, date):
-    """Gère les messages reçus de Telegram"""
     try:
         logger.info(f"📩 MESSAGE REÇU - ID: {message_id}")
         logger.info(f"📝 Contenu: {text[:200]}...")
@@ -566,7 +490,6 @@ async def handle_telegram_message(text: str, message_id: str, date):
         logger.error(f"❌ Erreur traitement message: {e}")
 
 async def handle_telegram_command(text: str, message_id: str):
-    """Traite les commandes Telegram"""
     global total_reports, stats_data
     
     try:
@@ -683,7 +606,6 @@ async def handle_telegram_command(text: str, message_id: str):
         logger.error(f"❌ Erreur commande: {e}")
 
 async def process_market_analysis(text: str, message_id: str, date):
-    """Traite les messages comme des analyses de marché et envoie des notifications"""
     global total_analyses, total_alerts, stats_data
     
     try:
@@ -711,7 +633,7 @@ async def process_market_analysis(text: str, message_id: str, date):
             logger.error(f"❌ Erreur DeepSeek: {e}")
             result = None
         
-        # === CONSTRUIRE LE MESSAGE ET SAUVEGARDER ===
+        # === TOUJOURS SAUVEGARDER ===
         if result and result.get("success"):
             analysis = result.get("analysis", {})
             score = analysis.get("score", 0)
@@ -732,8 +654,10 @@ async def process_market_analysis(text: str, message_id: str, date):
             }
             
             # === SAUVEGARDER L'HISTORIQUE ===
-            await save_analysis_history(analysis_data)
+            add_analysis_to_history(analysis_data)
+            logger.info(f"✅ Analyse sauvegardée dans l'historique")
             
+            # === CONSTRUIRE LE MESSAGE ===
             emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
             message = f"""{emoji} **Analyse LongTerm AI**
 
@@ -751,9 +675,7 @@ async def process_market_analysis(text: str, message_id: str, date):
 **Impact par actif:**
 • **BTC:** {analysis.get('btc_impact', 'Non spécifié')}
 • **ETH:** {analysis.get('eth_impact', 'Non spécifié')}
-• **GOLD:** {analysis.get('gold_impact', 'Non spécifié')}
-
-{f'**Comparaison historique:** {analysis.get("historical_comparison", "")}' if analysis.get('historical_comparison') else ''}"""
+• **GOLD:** {analysis.get('gold_impact', 'Non spécifié')}"""
         else:
             # Fallback si DeepSeek échoue
             analysis_data["analysis"] = {
@@ -766,7 +688,8 @@ async def process_market_analysis(text: str, message_id: str, date):
             }
             
             # === SAUVEGARDER L'HISTORIQUE (TOUJOURS) ===
-            await save_analysis_history(analysis_data)
+            add_analysis_to_history(analysis_data)
+            logger.info(f"✅ Analyse de secours sauvegardée dans l'historique")
             
             message = f"""📩 **Nouveau message analysé**
 
@@ -795,7 +718,6 @@ async def process_market_analysis(text: str, message_id: str, date):
 # ===== SERVICE TELEGRAM =====
 
 async def start_telegram_service():
-    """Démarre le service Telegram"""
     global telegram_running, telegram_task, telegram_service
     
     if not TELEGRAM_AVAILABLE:
@@ -810,7 +732,6 @@ async def start_telegram_service():
             logger.error("❌ Impossible de créer le service Telegram")
             return False
         
-        # Connexion
         logger.info("📡 Connexion à Telegram...")
         if not await service.connect():
             logger.error("❌ Impossible de se connecter à Telegram")
@@ -818,7 +739,6 @@ async def start_telegram_service():
         
         logger.info("✅ Connecté à Telegram avec succès")
         
-        # Démarrer l'écoute
         telegram_running = True
         logger.info("👀 Démarrage de l'écoute Telegram...")
         
@@ -841,7 +761,6 @@ async def start_telegram_service():
         return False
 
 async def stop_telegram_service():
-    """Arrête le service Telegram"""
     global telegram_running, telegram_task, telegram_service
     
     try:
@@ -869,38 +788,35 @@ async def stop_telegram_service():
 
 @app.on_event("startup")
 async def startup_event():
-    """Démarrage automatique au lancement"""
     global config_data, stats_data, total_analyses, total_alerts, total_reports
     
     logger.info("=" * 50)
     logger.info("🚀 LANCEMENT LONGTEM AI BOT")
     logger.info("=" * 50)
     
-    # Charger la config
     config_data = load_config()
     
-    # Charger les stats
     stats_data = load_stats()
     total_analyses = stats_data.get("total_analyses", 0)
     total_alerts = stats_data.get("total_alerts", 0)
     total_reports = stats_data.get("total_reports", 0)
-    logger.info(f"📊 Statistiques chargées: Analyses={total_analyses}, Alertes={total_alerts}, Reports={total_reports}")
     
-    # Vérifier les canaux
+    history_count = len(load_history())
+    
+    logger.info(f"📊 Statistiques: Analyses={total_analyses}, Alertes={total_alerts}, Reports={total_reports}")
+    logger.info(f"📊 Historique: {history_count} analyses enregistrées")
+    
     channels = config_data.get("telegram_channels", [])
     if channels:
         logger.info(f"📡 Canaux configurés: {[c.get('channel') for c in channels if c.get('active', True)]}")
     else:
         logger.warning("⚠️ Aucun canal Telegram configuré")
-        logger.warning("   Ajoutez des canaux dans config.json")
     
-    # Vérifier DeepSeek
     if os.getenv("DEEPSEEK_API_KEY"):
         logger.info("✅ DeepSeek API configurée")
     else:
         logger.warning("⚠️ DeepSeek API non configurée")
     
-    # Démarrer Telegram
     logger.info("🔄 Démarrage du service Telegram...")
     success = await start_telegram_service()
     
@@ -909,49 +825,37 @@ async def startup_event():
         logger.info("👀 Envoyez /start à votre bot pour tester")
     else:
         logger.error("❌ ÉCHEC DU DÉMARRAGE TELEGRAM")
-        logger.error("   Vérifiez que config.json contient des canaux valides")
-        logger.info("   Allez sur /telegram-login pour vous connecter")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Arrêt à la fermeture"""
     logger.info("🛑 Arrêt du bot...")
     await stop_telegram_service()
     logger.info("✅ Bot arrêté")
 
 # ============================================
-# ROUTES DE CONTRÔLE TELEGRAM
+# ROUTES DE CONTRÔLE
 # ============================================
 
 @app.post("/api/telegram/start")
 async def start_telegram():
-    """Démarre le service Telegram"""
     try:
         success = await start_telegram_service()
-        return {
-            "success": success,
-            "message": "Service Telegram démarré" if success else "Erreur de démarrage"
-        }
+        return {"success": success, "message": "Service Telegram démarré" if success else "Erreur de démarrage"}
     except Exception as e:
         logger.error(f"Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/telegram/stop")
 async def stop_telegram():
-    """Arrête le service Telegram"""
     try:
         success = await stop_telegram_service()
-        return {
-            "success": success,
-            "message": "Service Telegram arrêté" if success else "Erreur d'arrêt"
-        }
+        return {"success": success, "message": "Service Telegram arrêté" if success else "Erreur d'arrêt"}
     except Exception as e:
         logger.error(f"Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/api/telegram/status")
 async def telegram_status():
-    """Retourne le statut du service Telegram"""
     service = get_telegram_service()
     return {
         "connected": service.is_connected if service else False,
@@ -962,7 +866,6 @@ async def telegram_status():
 
 @app.post("/api/telegram/test")
 async def send_test_message():
-    """Envoie un message de test"""
     try:
         service = get_telegram_service()
         if not service or not service.is_connected:
@@ -989,211 +892,167 @@ async def send_test_message():
 
 @app.post("/api/reload")
 async def reload_bot():
-    """Recharge le bot et ses configurations"""
     global config_data, stats_data, total_analyses, total_alerts, total_reports
     
     try:
         logger.info("🔄 Rechargement du bot...")
         
-        # 1. Recharger la configuration
         config_data = load_config()
         
-        # 2. Recharger les stats
         stats_data = load_stats()
         total_analyses = stats_data.get("total_analyses", 0)
         total_alerts = stats_data.get("total_alerts", 0)
         total_reports = stats_data.get("total_reports", 0)
         
-        # 3. Recharger les canaux Telegram
         if telegram_running and TELEGRAM_AVAILABLE:
             service = get_telegram_service()
             if service:
                 await service.reload_channels()
                 logger.info("✅ Canaux Telegram rechargés")
         
-        # 4. Mettre à jour le statut
         await update_bot_status()
         
         logger.info("✅ Bot rechargé avec succès")
-        return {
-            "success": True,
-            "message": "Bot rechargé avec succès",
-            "timestamp": datetime.now().isoformat()
-        }
+        return {"success": True, "message": "Bot rechargé avec succès", "timestamp": datetime.now().isoformat()}
         
     except Exception as e:
         logger.error(f"❌ Erreur lors du rechargement: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "message": "Erreur lors du rechargement"
-        }
+        return {"success": False, "error": str(e), "message": "Erreur lors du rechargement"}
 
-# ===== ROUTES DE PARAMÈTRES =====
+# ============================================
+# ROUTES DE PARAMÈTRES
+# ============================================
 
 @app.post("/api/settings/interval")
 async def save_interval(data: dict):
-    """Sauvegarde l'intervalle de vérification des prix"""
     try:
         interval = data.get("interval_minutes")
         if not interval or interval < 1:
             return {"success": False, "error": "Intervalle invalide"}
-        
-        config = load_config()
-        config["price_interval"] = interval
-        save_config(config)
-        
+        config_data = load_config()
+        config_data["price_interval"] = interval
+        save_config(config_data)
         logger.info(f"✅ Intervalle mis à jour: {interval} minutes")
         return {"success": True, "message": f"Intervalle mis à jour: {interval} minutes"}
-        
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/settings/threshold")
 async def save_threshold(data: dict):
-    """Sauvegarde le seuil d'alerte"""
     try:
         threshold = data.get("threshold_percent")
         if threshold is None or threshold < 0:
             return {"success": False, "error": "Seuil invalide"}
-        
-        config = load_config()
-        config["alert_threshold"] = threshold
-        save_config(config)
-        
+        config_data = load_config()
+        config_data["alert_threshold"] = threshold
+        save_config(config_data)
         logger.info(f"✅ Seuil mis à jour: {threshold}%")
         return {"success": True, "message": f"Seuil mis à jour: {threshold}%"}
-        
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/settings/notifications")
 async def save_notifications(data: dict):
-    """Sauvegarde les préférences de notification"""
     try:
-        config = load_config()
-        config["notifications"] = {
+        config_data = load_config()
+        config_data["notifications"] = {
             "price": data.get("price", True),
             "news": data.get("news", True),
             "weekly": data.get("weekly", True)
         }
-        save_config(config)
-        
+        save_config(config_data)
         logger.info("✅ Préférences de notification enregistrées")
         return {"success": True, "message": "Préférences de notification enregistrées"}
-        
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/api/settings/channels")
 async def get_channels():
-    """Récupère la liste des canaux"""
     try:
-        config = load_config()
-        channels = config.get("telegram_channels", [])
+        config_data = load_config()
+        channels = config_data.get("telegram_channels", [])
         return {"success": True, "channels": channels}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 @app.post("/api/settings/channels/add")
 async def add_channel(data: dict):
-    """Ajoute un canal à la liste"""
     try:
         channel = data.get("channel", "").strip()
         if not channel:
             return {"success": False, "error": "Canal invalide"}
-        
-        config = load_config()
-        channels = config.get("telegram_channels", [])
-        
+        config_data = load_config()
+        channels = config_data.get("telegram_channels", [])
         for ch in channels:
             if ch.get("channel") == channel:
                 return {"success": False, "error": "Ce canal existe déjà"}
-        
         channels.append({"channel": channel, "active": True})
-        config["telegram_channels"] = channels
-        save_config(config)
-        
-        # Recharger les canaux si le service est en cours
+        config_data["telegram_channels"] = channels
+        save_config(config_data)
         if telegram_running and TELEGRAM_AVAILABLE:
             service = get_telegram_service()
             if service:
                 await service.reload_channels()
-        
         logger.info(f"✅ Canal ajouté: {channel}")
         return {"success": True, "message": f"Canal ajouté: {channel}"}
-        
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/settings/channels/remove")
 async def remove_channel(data: dict):
-    """Supprime un canal de la liste"""
     try:
         index = data.get("index")
         if index is None:
             return {"success": False, "error": "Index invalide"}
-        
-        config = load_config()
-        channels = config.get("telegram_channels", [])
-        
+        config_data = load_config()
+        channels = config_data.get("telegram_channels", [])
         if 0 <= index < len(channels):
             removed = channels.pop(index)
-            config["telegram_channels"] = channels
-            save_config(config)
-            
+            config_data["telegram_channels"] = channels
+            save_config(config_data)
             if telegram_running and TELEGRAM_AVAILABLE:
                 service = get_telegram_service()
                 if service:
                     await service.reload_channels()
-            
             logger.info(f"✅ Canal supprimé: {removed.get('channel')}")
             return {"success": True, "message": f"Canal {removed.get('channel')} supprimé"}
         else:
             return {"success": False, "error": "Index hors limites"}
-            
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 @app.post("/api/settings/channels/toggle")
 async def toggle_channel(data: dict):
-    """Active/désactive un canal"""
     try:
         index = data.get("index")
         if index is None:
             return {"success": False, "error": "Index invalide"}
-        
-        config = load_config()
-        channels = config.get("telegram_channels", [])
-        
+        config_data = load_config()
+        channels = config_data.get("telegram_channels", [])
         if 0 <= index < len(channels):
             channels[index]["active"] = not channels[index].get("active", True)
-            config["telegram_channels"] = channels
-            save_config(config)
-            
+            config_data["telegram_channels"] = channels
+            save_config(config_data)
             if telegram_running and TELEGRAM_AVAILABLE:
                 service = get_telegram_service()
                 if service:
                     await service.reload_channels()
-            
             logger.info(f"✅ Statut du canal modifié")
             return {"success": True, "message": "Statut du canal modifié"}
         else:
             return {"success": False, "error": "Index hors limites"}
-            
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
-# ===== ROUTE DE STATUT AMÉLIORÉE =====
+# ===== ROUTE DE STATUT =====
 
 async def update_bot_status():
-    """Met à jour le statut du bot"""
     try:
         logger.info("📊 Mise à jour du statut...")
         return True
@@ -1203,17 +1062,15 @@ async def update_bot_status():
 
 @app.get("/api/status")
 async def get_status():
-    """Retourne le statut complet du bot"""
     global total_analyses, total_alerts, total_reports
     
     try:
-        # Recharger les stats du fichier
-        stats = load_stats()
-        total_analyses = stats.get("total_analyses", 0)
-        total_alerts = stats.get("total_alerts", 0)
-        total_reports = stats.get("total_reports", 0)
+        stats_data = load_stats()
+        total_analyses = stats_data.get("total_analyses", 0)
+        total_alerts = stats_data.get("total_alerts", 0)
+        total_reports = stats_data.get("total_reports", 0)
         
-        config = load_config()
+        config_data = load_config()
         
         status = {
             "running": True,
@@ -1223,9 +1080,9 @@ async def get_status():
                 "channels": len(telegram_service.channel_handlers) if telegram_service and hasattr(telegram_service, 'channel_handlers') else 0
             },
             "config": {
-                "price_interval": config.get("price_interval", 30),
-                "alert_threshold": config.get("alert_threshold", 5),
-                "notifications": config.get("notifications", {
+                "price_interval": config_data.get("price_interval", 30),
+                "alert_threshold": config_data.get("alert_threshold", 5),
+                "notifications": config_data.get("notifications", {
                     "price": True,
                     "news": True,
                     "weekly": True
@@ -1243,120 +1100,36 @@ async def get_status():
         
     except Exception as e:
         logger.error(f"❌ Erreur statut: {e}")
-        return {
-            "running": True,
-            "error": str(e)
-        }
+        return {"running": True, "error": str(e)}
 
 # ===== ROUTE D'ANALYSES =====
 
 @app.get("/api/analyses")
 async def get_analyses():
-    """Récupère la liste des analyses"""
     try:
-        history_file = "data/analyses_history.json"
-        if os.path.exists(history_file):
-            with open(history_file, 'r', encoding='utf-8') as f:
-                analyses = json.load(f)
-            return {"success": True, "analyses": analyses}
-        else:
-            return {"success": True, "analyses": []}
+        history = load_history()
+        return {"success": True, "analyses": history}
     except Exception as e:
         logger.error(f"❌ Erreur lecture analyses: {e}")
         return {"success": False, "error": str(e)}
 
-# ===== ROUTE D'EXPORT =====
+# ===== ROUTES DE DEBUG =====
 
-@app.post("/api/export-data")
-async def export_data():
-    """Exporte toutes les données"""
+@app.get("/api/debug/files")
+async def debug_files():
+    """Vérifie l'état des fichiers"""
     try:
-        config = load_config()
+        history = load_history()
         stats = load_stats()
         
-        history_file = "data/analyses_history.json"
-        analyses = []
-        if os.path.exists(history_file):
-            with open(history_file, 'r', encoding='utf-8') as f:
-                analyses = json.load(f)
-        
-        data = {
-            "config": config,
-            "stats": stats,
-            "analyses": analyses,
-            "telegram_status": {
-                "connected": telegram_service.is_connected if telegram_service else False,
-                "running": telegram_running,
-                "channels": len(telegram_service.channel_handlers) if telegram_service and hasattr(telegram_service, 'channel_handlers') else 0
-            },
-            "timestamp": datetime.now().isoformat(),
-            "version": "3.0"
-        }
-        
-        return {"success": True, "data": data}
-        
-    except Exception as e:
-        logger.error(f"❌ Erreur export: {e}")
-        return {"success": False, "error": str(e)}
-
-# ===== ROUTE DE RESET =====
-
-@app.post("/api/reset")
-async def reset_bot():
-    """Réinitialise le bot"""
-    global total_analyses, total_alerts, total_reports, stats_data
-    
-    try:
-        # Arrêter Telegram
-        await stop_telegram_service()
-        
-        # Réinitialiser la configuration
-        default_config = {
-            "price_interval": 30,
-            "alert_threshold": 5,
-            "telegram_channels": [],
-            "notifications": {
-                "price": True,
-                "news": True,
-                "weekly": True
-            },
-            "telegram": {
-                "api_id": "",
-                "api_hash": "",
-                "phone": "",
-                "channel": ""
-            }
-        }
-        save_config(default_config)
-        
-        # Réinitialiser les stats
-        stats_data = {
-            "total_analyses": 0,
-            "total_alerts": 0,
-            "total_reports": 0,
-            "last_update": datetime.now().isoformat()
-        }
-        save_stats(stats_data)
-        total_analyses = 0
-        total_alerts = 0
-        total_reports = 0
-        
-        # Supprimer l'historique
-        if os.path.exists("data/analyses_history.json"):
-            os.remove("data/analyses_history.json")
-        
-        # Redémarrer
-        await start_telegram_service()
-        
-        logger.info("✅ Bot réinitialisé")
         return {
             "success": True,
-            "message": "Bot réinitialisé avec succès",
-            "timestamp": datetime.now().isoformat()
+            "history_count": len(history),
+            "stats": stats,
+            "history_exists": os.path.exists("data/analyses_history.json"),
+            "stats_exists": os.path.exists("data/stats.json")
         }
-        
     except Exception as e:
-        logger.error(f"❌ Erreur reset: {e}")
         return {"success": False, "error": str(e)}
 
 # ============================================
