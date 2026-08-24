@@ -25,6 +25,22 @@ app = FastAPI(title="LongTerm AI Bot", version="3.0")
 # ===== CRÉATION DU DOSSIER DATA =====
 os.makedirs("data", exist_ok=True)
 
+# ===== INITIALISATION DE L'HISTORIQUE =====
+def init_history_file():
+    """Crée le fichier d'historique s'il n'existe pas"""
+    history_file = "data/analyses_history.json"
+    if not os.path.exists(history_file):
+        try:
+            os.makedirs("data", exist_ok=True)
+            with open(history_file, 'w', encoding='utf-8') as f:
+                json.dump([], f, indent=2, ensure_ascii=False)
+            logger.info("✅ Fichier d'historique créé: data/analyses_history.json")
+        except Exception as e:
+            logger.error(f"❌ Erreur création historique: {e}")
+
+# Initialiser l'historique
+init_history_file()
+
 # ===== FICHIER DE STATISTIQUES =====
 STATS_FILE = "data/stats.json"
 
@@ -61,15 +77,21 @@ def save_stats(stats):
 async def save_analysis_history(analysis_data: dict):
     try:
         history_file = "data/analyses_history.json"
+        os.makedirs("data", exist_ok=True)
+        
         history = []
         if os.path.exists(history_file):
             with open(history_file, 'r', encoding='utf-8') as f:
                 history = json.load(f)
+        
         history.append(analysis_data)
         if len(history) > 100:
             history = history[-100:]
+        
         with open(history_file, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
+        logger.info(f"✅ Analyse sauvegardée dans l'historique - Total: {len(history)}")
+        
     except Exception as e:
         logger.error(f"❌ Erreur sauvegarde historique: {e}")
 
@@ -673,6 +695,14 @@ async def process_market_analysis(text: str, message_id: str, date):
         save_stats(stats_data)
         logger.info(f"📊 Total analyses: {total_analyses}")
         
+        # === PRÉPARER L'ANALYSE ===
+        analysis_data = {
+            "id": message_id,
+            "timestamp": datetime.now().isoformat(),
+            "text": text[:300],
+            "analysis": {}
+        }
+        
         # === ANALYSE AVEC DEEPSEEK ===
         try:
             result = await ai_service.analyze(text)
@@ -681,45 +711,31 @@ async def process_market_analysis(text: str, message_id: str, date):
             logger.error(f"❌ Erreur DeepSeek: {e}")
             result = None
         
-        # === PRÉPARER L'ANALYSE POUR L'HISTORIQUE ===
-        analysis_data = {
-            "id": message_id,
-            "timestamp": datetime.now().isoformat(),
-            "text": text[:300],
-            "analysis": {}
-        }
-        
-        # === CONSTRUIRE LE MESSAGE DE NOTIFICATION ===
-        service = get_telegram_service()
-        if service and service.is_connected:
-            channel = config_data.get("telegram", {}).get("channel")
-            if not channel:
-                channel = os.getenv("TELEGRAM_CHANNEL", "@Trading_longterme_bot")
+        # === CONSTRUIRE LE MESSAGE ET SAUVEGARDER ===
+        if result and result.get("success"):
+            analysis = result.get("analysis", {})
+            score = analysis.get("score", 0)
             
-            if result and result.get("success"):
-                analysis = result.get("analysis", {})
-                score = analysis.get("score", 0)
-                
-                if score >= 7:
-                    total_alerts += 1
-                    stats_data["total_alerts"] = total_alerts
-                    save_stats(stats_data)
-                    logger.info(f"🔔 Alerte ! Score: {score}/10")
-                
-                analysis_data["analysis"] = {
-                    "asset": analysis.get("asset", "OTHER"),
-                    "impact": analysis.get("impact", "neutral"),
-                    "score": score,
-                    "time_horizon": analysis.get("time_horizon", "medium_term"),
-                    "summary": analysis.get("summary", "") or analysis.get("reason", ""),
-                    "confidence": analysis.get("confidence", "medium")
-                }
-                
-                # === ENREGISTRER DANS L'HISTORIQUE ===
-                await save_analysis_history(analysis_data)
-                
-                emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
-                message = f"""{emoji} **Analyse LongTerm AI**
+            if score >= 7:
+                total_alerts += 1
+                stats_data["total_alerts"] = total_alerts
+                save_stats(stats_data)
+                logger.info(f"🔔 Alerte ! Score: {score}/10")
+            
+            analysis_data["analysis"] = {
+                "asset": analysis.get("asset", "OTHER"),
+                "impact": analysis.get("impact", "neutral"),
+                "score": score,
+                "time_horizon": analysis.get("time_horizon", "medium_term"),
+                "summary": analysis.get("summary", "") or analysis.get("reason", ""),
+                "confidence": analysis.get("confidence", "medium")
+            }
+            
+            # === SAUVEGARDER L'HISTORIQUE ===
+            await save_analysis_history(analysis_data)
+            
+            emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
+            message = f"""{emoji} **Analyse LongTerm AI**
 
 **Actif:** {analysis.get('asset', 'OTHER')}
 **Impact:** {analysis.get('impact', 'neutral')} (Score: {score}/10)
@@ -738,16 +754,34 @@ async def process_market_analysis(text: str, message_id: str, date):
 • **GOLD:** {analysis.get('gold_impact', 'Non spécifié')}
 
 {f'**Comparaison historique:** {analysis.get("historical_comparison", "")}' if analysis.get('historical_comparison') else ''}"""
-            else:
-                # Notification simple si DeepSeek échoue
-                message = f"""📩 **Nouveau message analysé**
+        else:
+            # Fallback si DeepSeek échoue
+            analysis_data["analysis"] = {
+                "asset": "OTHER",
+                "impact": "neutral",
+                "score": 0,
+                "time_horizon": "unknown",
+                "summary": text[:200],
+                "confidence": "low"
+            }
+            
+            # === SAUVEGARDER L'HISTORIQUE (TOUJOURS) ===
+            await save_analysis_history(analysis_data)
+            
+            message = f"""📩 **Nouveau message analysé**
 
 **ID:** {message_id}
 **Contenu:** {text[:200]}...
 
 ⚠️ Analyse détaillée non disponible - Notification de secours"""
+        
+        # === ENVOYER LA NOTIFICATION ===
+        service = get_telegram_service()
+        if service and service.is_connected:
+            channel = config_data.get("telegram", {}).get("channel")
+            if not channel:
+                channel = os.getenv("TELEGRAM_CHANNEL", "@Trading_longterme_bot")
             
-            # === ENVOYER LA NOTIFICATION ===
             await service.client.send_message(channel, message)
             logger.info(f"✅ Notification envoyée à {channel}")
         else:
