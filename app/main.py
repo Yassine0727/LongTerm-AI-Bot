@@ -95,7 +95,7 @@ def save_stats(stats):
         return False
 
 def load_history():
-    """Charge l'historique des analyses"""
+    """Charge l'historique des analyses depuis analyses_history.json"""
     history_file = "data/analyses_history.json"
     if os.path.exists(history_file):
         try:
@@ -104,10 +104,19 @@ def load_history():
         except Exception as e:
             logger.error(f"❌ Erreur lecture historique: {e}")
             return []
+    
+    # Si le fichier n'existe pas, le créer
+    try:
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=2, ensure_ascii=False)
+        logger.info("✅ Fichier analyses_history.json créé")
+    except Exception as e:
+        logger.error(f"❌ Erreur création historique: {e}")
+    
     return []
 
 def save_history(history):
-    """Sauvegarde l'historique des analyses"""
+    """Sauvegarde l'historique des analyses dans analyses_history.json"""
     try:
         with open("data/analyses_history.json", 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
@@ -121,9 +130,9 @@ def add_analysis_to_history(analysis_data):
     try:
         history = load_history()
         history.append(analysis_data)
-        # Garder seulement les 100 dernières
-        if len(history) > 100:
-            history = history[-100:]
+        # Garder seulement les 200 dernières analyses
+        if len(history) > 200:
+            history = history[-200:]
         return save_history(history)
     except Exception as e:
         logger.error(f"❌ Erreur ajout historique: {e}")
@@ -558,6 +567,7 @@ async def handle_telegram_command(text: str, message_id: str):
         elif command == '/analyze':
             total_reports += 1
             stats_data["total_reports"] = total_reports
+            stats_data["last_update"] = datetime.now().isoformat()
             save_stats(stats_data)
             await service.client.send_message(
                 channel,
@@ -569,6 +579,7 @@ async def handle_telegram_command(text: str, message_id: str):
         elif command == '/weekly_report':
             total_reports += 1
             stats_data["total_reports"] = total_reports
+            stats_data["last_update"] = datetime.now().isoformat()
             save_stats(stats_data)
             await service.client.send_message(
                 channel,
@@ -614,6 +625,9 @@ async def process_market_analysis(text: str, message_id: str, date):
         # === INCÉMENTER LE COMPTEUR ===
         total_analyses += 1
         stats_data["total_analyses"] = total_analyses
+        stats_data["last_update"] = datetime.now().isoformat()
+        
+        # Sauvegarder dans stats.json
         save_stats(stats_data)
         logger.info(f"📊 Total analyses: {total_analyses}")
         
@@ -653,9 +667,9 @@ async def process_market_analysis(text: str, message_id: str, date):
                 "confidence": analysis.get("confidence", "medium")
             }
             
-            # === SAUVEGARDER L'HISTORIQUE ===
+            # === SAUVEGARDER DANS L'HISTORIQUE ===
             add_analysis_to_history(analysis_data)
-            logger.info(f"✅ Analyse sauvegardée dans l'historique")
+            logger.info(f"✅ Analyse sauvegardée dans l'historique (total: {total_analyses})")
             
             # === CONSTRUIRE LE MESSAGE ===
             emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
@@ -687,9 +701,9 @@ async def process_market_analysis(text: str, message_id: str, date):
                 "confidence": "low"
             }
             
-            # === SAUVEGARDER L'HISTORIQUE (TOUJOURS) ===
+            # === SAUVEGARDER DANS L'HISTORIQUE (TOUJOURS) ===
             add_analysis_to_history(analysis_data)
-            logger.info(f"✅ Analyse de secours sauvegardée dans l'historique")
+            logger.info(f"✅ Analyse de secours sauvegardée dans l'historique (total: {total_analyses})")
             
             message = f"""📩 **Nouveau message analysé**
 
@@ -1111,6 +1125,15 @@ async def get_analyses():
         return {"success": True, "analyses": history}
     except Exception as e:
         logger.error(f"❌ Erreur lecture analyses: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/analyses/count")
+async def get_analyses_count():
+    try:
+        history = load_history()
+        return {"success": True, "total_count": len(history)}
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
 
 # ===== ROUTES DE DEBUG =====
