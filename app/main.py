@@ -195,7 +195,11 @@ SECRET_KEY = "votre_cle_secrete_tres_longue_et_aleatoire"
 async def auth_middleware(request: Request, call_next):
     """Middleware simplifié - sans redirection vers login"""
     
-    public_routes = ["/api/ping", "/telegram-login", "/", "/settings", "/history", "/web", "/api/status"]
+    # PERMETTRE L'ACCÈS PUBLIC À /API/STATUS
+    if request.url.path == "/api/status":
+        return await call_next(request)
+    
+    public_routes = ["/api/ping", "/telegram-login", "/", "/settings", "/history", "/web"]
     
     if request.url.path in public_routes:
         return await call_next(request)
@@ -667,7 +671,11 @@ async def process_market_analysis(text: str, message_id: str, date):
             "timestamp": datetime.now().isoformat(),
             "text": text[:300],
             "analysis": {},
-            "message_id": message_id
+            "message_id": message_id,
+            "asset": "UNKNOWN",
+            "impact": "neutral",
+            "score": 0,
+            "summary": text[:200]
         }
         
         # === ANALYSE AVEC DEEPSEEK ===
@@ -723,6 +731,9 @@ async def process_market_analysis(text: str, message_id: str, date):
             supabase_success = supabase_storage.save_analysis(analysis_data)
             if supabase_success:
                 logger.info("✅ Analyse sauvegardée sur Supabase")
+                # Récupérer les stats mises à jour pour vérifier
+                stats = supabase_storage.get_stats()
+                logger.info(f"📊 Stats après sauvegarde: {stats}")
             else:
                 logger.error("❌ Échec de la sauvegarde sur Supabase")
         
@@ -731,19 +742,23 @@ async def process_market_analysis(text: str, message_id: str, date):
         logger.info(f"✅ Analyse sauvegardée dans l'historique local (total: {total_analyses})")
         
         # === CONSTRUIRE LE MESSAGE À ENVOYER ===
+        score = analysis_data.get('score', 0)
+        asset = analysis_data.get('asset', 'UNKNOWN')
+        impact = analysis_data.get('impact', 'neutral')
+        summary = analysis_data.get('summary', text[:200])
+        
         if result and result.get("success"):
             analysis = result.get("analysis", {})
-            score = analysis.get("score", 0)
-            emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
+            emoji = "🟢" if impact == 'positive' else "🔴" if impact == 'negative' else "🟡"
             message = f"""{emoji} **Analyse LongTerm AI**
 
-**Actif:** {analysis.get('asset', 'OTHER')}
-**Impact:** {analysis.get('impact', 'neutral')} (Score: {score}/10)
+**Actif:** {asset}
+**Impact:** {impact} (Score: {score}/10)
 **Horizon:** {analysis.get('time_horizon', 'medium_term')}
 **Confiance:** {analysis.get('confidence', 'medium')}
 
 **Résumé:**
-{analysis.get('summary', '') or analysis.get('reason', '')}
+{summary}
 
 **Analyse détaillée:**
 {analysis.get('detailed_analysis', '')}
@@ -758,6 +773,8 @@ async def process_market_analysis(text: str, message_id: str, date):
             message = f"""📩 **Nouveau message analysé**
 
 **ID:** {message_id}
+**Actif:** {asset}
+**Impact:** {impact} (Score: {score}/10)
 **Contenu:** {text[:200]}...
 
 ⚠️ Analyse détaillée non disponible
@@ -1154,6 +1171,10 @@ async def get_status():
         supabase_stats = {}
         if supabase_storage and supabase_storage.connected:
             supabase_stats = supabase_storage.get_stats()
+            if supabase_stats:
+                total_analyses = supabase_stats.get('total_analyses', 0)
+                total_alerts = supabase_stats.get('total_alerts', 0)
+                total_reports = supabase_stats.get('total_reports', 0)
         
         status = {
             "running": True,
