@@ -16,6 +16,7 @@ from datetime import datetime
 from app.api.routes import router
 from app.history_page import router as history_router
 from app.services.ai_service import AIService
+from app.supabase_storage import SupabaseStorage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -146,6 +147,16 @@ total_reports = stats_data.get("total_reports", 0)
 
 logger.info(f"📊 Statistiques chargées: Analyses={total_analyses}, Alertes={total_alerts}, Reports={total_reports}")
 logger.info(f"📊 Historique chargé: {len(load_history())} analyses")
+
+# ===== INITIALISATION SUPABASE =====
+supabase_storage = SupabaseStorage()
+if supabase_storage.connected:
+    logger.info("✅ Supabase connecté")
+    # Tester la connexion
+    stats = supabase_storage.get_stats()
+    logger.info(f"📊 Stats Supabase: {stats}")
+else:
+    logger.warning("⚠️ Supabase non connecté, fallback sur JSON")
 
 # ===== CORS CONFIGURATION SÉCURISÉE =====
 app.add_middleware(
@@ -531,6 +542,17 @@ async def handle_telegram_command(text: str, message_id: str):
             
         elif command == '/status':
             status = "🟢 **En ligne**" if telegram_running else "🔴 **Hors ligne**"
+            
+            # Récupérer les stats depuis Supabase ou local
+            if supabase_storage and supabase_storage.connected:
+                stats = supabase_storage.get_stats()
+                total_analyses = stats.get('total_analyses', 0)
+                total_alerts = stats.get('total_alerts', 0)
+            else:
+                stats_data = load_stats()
+                total_analyses = stats_data.get("total_analyses", 0)
+                total_alerts = stats_data.get("total_alerts", 0)
+            
             await service.client.send_message(
                 channel,
                 f"📊 **État du bot**\n\n"
@@ -539,7 +561,8 @@ async def handle_telegram_command(text: str, message_id: str):
                 f"Messages traités : {len(service.processed_messages) if hasattr(service, 'processed_messages') else 0}\n"
                 f"📈 Analyses totales : {total_analyses}\n"
                 f"🔔 Alertes : {total_alerts}\n"
-                f"📊 Rapports : {total_reports}"
+                f"📊 Rapports : {total_reports}\n"
+                f"📁 Stockage : {'Supabase' if supabase_storage and supabase_storage.connected else 'Local JSON'}"
             )
             logger.info("✅ Commande /status envoyée")
             
@@ -621,13 +644,14 @@ async def process_market_analysis(text: str, message_id: str, date):
     
     try:
         logger.info(f"📊 Analyse du message: {text[:100]}...")
+        logger.info(f"🆔 Message ID: {message_id}")
         
         # === INCÉMENTER LE COMPTEUR ===
         total_analyses += 1
         stats_data["total_analyses"] = total_analyses
         stats_data["last_update"] = datetime.now().isoformat()
         
-        # Sauvegarder dans stats.json
+        # Sauvegarder dans stats.json (fallback)
         save_stats(stats_data)
         logger.info(f"📊 Total analyses: {total_analyses}")
         
@@ -636,7 +660,8 @@ async def process_market_analysis(text: str, message_id: str, date):
             "id": message_id,
             "timestamp": datetime.now().isoformat(),
             "text": text[:300],
-            "analysis": {}
+            "analysis": {},
+            "message_id": message_id
         }
         
         # === ANALYSE AVEC DEEPSEEK ===
@@ -647,7 +672,7 @@ async def process_market_analysis(text: str, message_id: str, date):
             logger.error(f"❌ Erreur DeepSeek: {e}")
             result = None
         
-        # === TOUJOURS SAUVEGARDER ===
+        # === PRÉPARER L'ANALYSE ===
         if result and result.get("success"):
             analysis = result.get("analysis", {})
             score = analysis.get("score", 0)
@@ -667,11 +692,48 @@ async def process_market_analysis(text: str, message_id: str, date):
                 "confidence": analysis.get("confidence", "medium")
             }
             
-            # === SAUVEGARDER DANS L'HISTORIQUE ===
-            add_analysis_to_history(analysis_data)
-            logger.info(f"✅ Analyse sauvegardée dans l'historique (total: {total_analyses})")
+            # Ajouter les champs au niveau racine pour Supabase
+            analysis_data["asset"] = analysis.get("asset", "OTHER")
+            analysis_data["impact"] = analysis.get("impact", "neutral")
+            analysis_data["score"] = score
+            analysis_data["summary"] = analysis.get("summary", "") or analysis.get("reason", "")
             
-            # === CONSTRUIRE LE MESSAGE ===
+        else:
+            # Fallback si DeepSeek échoue
+            analysis_data["analysis"] = {
+                "asset": "OTHER",
+                "impact": "neutral",
+                "score": 0,
+                "time_horizon": "unknown",
+                "summary": text[:200],
+                "confidence": "low"
+            }
+            analysis_data["asset"] = "OTHER"
+            analysis_data["impact"] = "neutral"
+            analysis_data["score"] = 0
+            analysis_data["summary"] = text[:200]
+        
+        # === SAUVEGARDER DANS SUPABASE ===
+        supabase_success = False
+        if supabase_storage and supabase_storage.connected:
+            logger.info("💾 Sauvegarde sur Supabase...")
+            supabase_success = supabase_storage.save_analysis(analysis_data)
+            if supabase_success:
+                logger.info("✅ Analyse sauvegardée sur Supabase")
+                # Mettre à jour les stats Supabase
+                stats = supabase_storage.get_stats()
+                logger.info(f"📊 Stats Supabase: {stats}")
+            else:
+                logger.error("❌ Échec de la sauvegarde sur Supabase")
+        
+        # === SAUVEGARDER DANS L'HISTORIQUE LOCAL (toujours) ===
+        add_analysis_to_history(analysis_data)
+        logger.info(f"✅ Analyse sauvegardée dans l'historique local (total: {total_analyses})")
+        
+        # === CONSTRUIRE LE MESSAGE À ENVOYER ===
+        if result and result.get("success"):
+            analysis = result.get("analysis", {})
+            score = analysis.get("score", 0)
             emoji = "🟢" if analysis.get('impact') == 'positive' else "🔴" if analysis.get('impact') == 'negative' else "🟡"
             message = f"""{emoji} **Analyse LongTerm AI**
 
@@ -689,28 +751,18 @@ async def process_market_analysis(text: str, message_id: str, date):
 **Impact par actif:**
 • **BTC:** {analysis.get('btc_impact', 'Non spécifié')}
 • **ETH:** {analysis.get('eth_impact', 'Non spécifié')}
-• **GOLD:** {analysis.get('gold_impact', 'Non spécifié')}"""
+• **GOLD:** {analysis.get('gold_impact', 'Non spécifié')}
+
+📁 Stockage: {'☁️ Supabase' if supabase_success else '💾 Local'}"""
         else:
-            # Fallback si DeepSeek échoue
-            analysis_data["analysis"] = {
-                "asset": "OTHER",
-                "impact": "neutral",
-                "score": 0,
-                "time_horizon": "unknown",
-                "summary": text[:200],
-                "confidence": "low"
-            }
-            
-            # === SAUVEGARDER DANS L'HISTORIQUE (TOUJOURS) ===
-            add_analysis_to_history(analysis_data)
-            logger.info(f"✅ Analyse de secours sauvegardée dans l'historique (total: {total_analyses})")
-            
             message = f"""📩 **Nouveau message analysé**
 
 **ID:** {message_id}
 **Contenu:** {text[:200]}...
 
-⚠️ Analyse détaillée non disponible - Notification de secours"""
+⚠️ Analyse détaillée non disponible
+
+📁 Stockage: {'☁️ Supabase' if supabase_success else '💾 Local'}"""
         
         # === ENVOYER LA NOTIFICATION ===
         service = get_telegram_service()
@@ -728,6 +780,8 @@ async def process_market_analysis(text: str, message_id: str, date):
         
     except Exception as e:
         logger.error(f"❌ Erreur analyse: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 # ===== SERVICE TELEGRAM =====
 
@@ -820,6 +874,14 @@ async def startup_event():
     logger.info(f"📊 Statistiques: Analyses={total_analyses}, Alertes={total_alerts}, Reports={total_reports}")
     logger.info(f"📊 Historique: {history_count} analyses enregistrées")
     
+    # Vérifier Supabase
+    if supabase_storage and supabase_storage.connected:
+        logger.info("✅ Supabase connecté")
+        stats = supabase_storage.get_stats()
+        logger.info(f"📊 Stats Supabase: {stats}")
+    else:
+        logger.warning("⚠️ Supabase non connecté, utilisation du stockage local")
+    
     channels = config_data.get("telegram_channels", [])
     if channels:
         logger.info(f"📡 Canaux configurés: {[c.get('channel') for c in channels if c.get('active', True)]}")
@@ -893,7 +955,8 @@ async def send_test_message():
             channel,
             "🧪 **Message de test**\n\n"
             "Le bot LongTerm AI est actif !\n"
-            f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"📁 Stockage: {'☁️ Supabase' if supabase_storage and supabase_storage.connected else '💾 Local'}"
         )
         return {"success": True, "message": "Message de test envoyé"}
     except Exception as e:
@@ -1086,6 +1149,11 @@ async def get_status():
         
         config_data = load_config()
         
+        # Récupérer les stats Supabase si disponible
+        supabase_stats = {}
+        if supabase_storage and supabase_storage.connected:
+            supabase_stats = supabase_storage.get_stats()
+        
         status = {
             "running": True,
             "telegram": {
@@ -1102,11 +1170,16 @@ async def get_status():
                     "weekly": True
                 })
             },
+            "storage": {
+                "type": "Supabase" if supabase_storage and supabase_storage.connected else "Local JSON",
+                "connected": supabase_storage and supabase_storage.connected
+            },
             "stats": {
                 "total_analyzed": total_analyses,
                 "total_alerts": total_alerts,
                 "total_reports": total_reports,
-                "last_update": datetime.now().isoformat()
+                "last_update": datetime.now().isoformat(),
+                "supabase": supabase_stats
             }
         }
         
@@ -1116,22 +1189,63 @@ async def get_status():
         logger.error(f"❌ Erreur statut: {e}")
         return {"running": True, "error": str(e)}
 
-# ===== ROUTE D'ANALYSES =====
+# ===== ROUTES D'ANALYSES =====
 
 @app.get("/api/analyses")
-async def get_analyses():
+async def get_analyses(limit: int = 20, offset: int = 0):
+    """Retourne les analyses depuis Supabase ou local"""
     try:
-        history = load_history()
-        return {"success": True, "analyses": history}
+        if supabase_storage and supabase_storage.connected:
+            analyses = supabase_storage.get_analyses(limit, offset)
+            return {"success": True, "analyses": analyses, "total": len(analyses), "source": "supabase"}
+        else:
+            history = load_history()
+            # Paginer manuellement
+            paginated = history[-limit:] if history else []
+            return {"success": True, "analyses": paginated, "total": len(history), "source": "local"}
     except Exception as e:
         logger.error(f"❌ Erreur lecture analyses: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/api/analyses/count")
 async def get_analyses_count():
+    """Retourne le nombre total d'analyses"""
     try:
-        history = load_history()
-        return {"success": True, "total_count": len(history)}
+        if supabase_storage and supabase_storage.connected:
+            count = supabase_storage.get_total_count()
+            return {"success": True, "total_count": count, "source": "supabase"}
+        else:
+            history = load_history()
+            return {"success": True, "total_count": len(history), "source": "local"}
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/analyses/asset/{asset}")
+async def get_analyses_by_asset(asset: str, limit: int = 20):
+    """Retourne les analyses par actif depuis Supabase"""
+    try:
+        if supabase_storage and supabase_storage.connected:
+            analyses = supabase_storage.get_analyses_by_asset(asset, limit)
+            return {"success": True, "analyses": analyses, "asset": asset, "source": "supabase"}
+        else:
+            history = load_history()
+            filtered = [a for a in history if a.get('asset', '').upper() == asset.upper()]
+            return {"success": True, "analyses": filtered[-limit:], "asset": asset, "source": "local"}
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/stats")
+async def get_stats_api():
+    """Retourne les stats depuis Supabase ou local"""
+    try:
+        if supabase_storage and supabase_storage.connected:
+            stats = supabase_storage.get_stats()
+            return {"success": True, "stats": stats, "source": "supabase"}
+        else:
+            stats = load_stats()
+            return {"success": True, "stats": stats, "source": "local"}
     except Exception as e:
         logger.error(f"❌ Erreur: {e}")
         return {"success": False, "error": str(e)}
@@ -1150,13 +1264,14 @@ async def debug_files():
             "history_count": len(history),
             "stats": stats,
             "history_exists": os.path.exists("data/analyses_history.json"),
-            "stats_exists": os.path.exists("data/stats.json")
+            "stats_exists": os.path.exists("data/stats.json"),
+            "supabase_connected": supabase_storage and supabase_storage.connected
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 # ============================================
-# PAGES HTML
+# PAGES HTML (inchangées)
 # ============================================
 
 # ===== PAGE DE CONNEXION =====
@@ -1529,6 +1644,16 @@ MAIN_PAGE = '''
         }
         .logout-btn:hover { background: #7f1d1d; transform: scale(1.02); }
         .bot-status-text { color: #34d399; font-size: 14px; font-weight: bold; }
+        .storage-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            background: #1a2a4a;
+            color: #60a5fa;
+            border: 1px solid #60a5fa;
+        }
+        .storage-badge.cloud { background: #064e3b; color: #34d399; border-color: #34d399; }
     </style>
 </head>
 <body>
@@ -1544,6 +1669,7 @@ MAIN_PAGE = '''
                 <span id="statusText">ONLINE 24/7</span>
             </span>
             <span style="color:#666;font-size:13px;" id="lastUpdate">Last update: -</span>
+            <span class="storage-badge" id="storageBadge">💾 Local</span>
             <button class="telegram-login-btn" onclick="window.location.href='/telegram-login'">
                 📱 Connecter Telegram
             </button>
@@ -1609,6 +1735,7 @@ MAIN_PAGE = '''
                 <div><div style="font-size:11px;color:#666;">Alerts</div><div style="font-size:24px;font-weight:bold;color:#fbbf24;" id="statsAlerts">0</div></div>
                 <div><div style="font-size:11px;color:#666;">Reports</div><div style="font-size:24px;font-weight:bold;color:#34d399;" id="statsReports">0</div></div>
             </div>
+            <div style="margin-top:8px;font-size:11px;color:#444;" id="storageInfo">Stockage: Local</div>
         </div>
     </div>
 
@@ -1789,6 +1916,19 @@ async function updateStatus() {
     if (data.telegram) {
         document.getElementById('telegramStatusLabel').textContent = data.telegram.connected ? '✅ Connecté' : '❌ Déconnecté';
     }
+    if (data.storage) {
+        var badge = document.getElementById('storageBadge');
+        var info = document.getElementById('storageInfo');
+        if (data.storage.type === 'Supabase' && data.storage.connected) {
+            badge.textContent = '☁️ Supabase';
+            badge.className = 'storage-badge cloud';
+            info.textContent = 'Stockage: ☁️ Supabase (cloud)';
+        } else {
+            badge.textContent = '💾 Local';
+            badge.className = 'storage-badge';
+            info.textContent = 'Stockage: 💾 Local JSON';
+        }
+    }
 }
 
 async function updatePrices() {
@@ -1846,6 +1986,7 @@ async function loadAnalyses() {
         html += '<div class="summary">' + summaryText + '</div>';
         html += '<div class="meta">' + date.toLocaleString() + ' | Horizon: ' + (a.time_horizon || 'N/A');
         if (a.confidence) html += ' | Confiance: ' + a.confidence.toUpperCase();
+        html += ' | Source: ' + (data.source || 'local');
         html += '</div>';
         html += '</div>';
     }
@@ -2666,5 +2807,6 @@ if __name__ == "__main__":
     print("   Mot de passe: admin123")
     print("=" * 50)
     print("🤖 Bot 24h/7j actif en permanence")
+    print("📁 Stockage: Supabase + Local (fallback)")
     print("=" * 50)
     uvicorn.run(app, host="127.0.0.1", port=8000)
