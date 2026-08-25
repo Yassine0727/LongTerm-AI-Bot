@@ -195,8 +195,7 @@ SECRET_KEY = "votre_cle_secrete_tres_longue_et_aleatoire"
 async def auth_middleware(request: Request, call_next):
     """Middleware simplifié - sans redirection vers login"""
     
-    # Ajoutez "/api/status" dans la liste des routes publiques
-public_routes = ["/api/ping", "/telegram-login", "/", "/settings", "/history", "/web", "/api/status"]
+    public_routes = ["/api/ping", "/telegram-login", "/", "/settings", "/history", "/web", "/api/status"]
     
     if request.url.path in public_routes:
         return await call_next(request)
