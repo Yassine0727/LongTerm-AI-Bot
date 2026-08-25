@@ -9,4 +9,3 @@ python-telegram-bot==20.6
 requests==2.31.0
 sendgrid==6.10.0
 httpx==0.25.1
-supabase>=1.0.0,<2.0.0
