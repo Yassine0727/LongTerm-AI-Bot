@@ -16,7 +16,22 @@ from datetime import datetime
 from app.api.routes import router
 from app.history_page import router as history_router
 from app.services.ai_service import AIService
-from app.supabase_storage import SupabaseStorage
+
+# ===== SUPABASE (OPTIONNEL - VIA REST API) =====
+try:
+    from app.supabase_storage import SupabaseStorage
+    supabase_storage = SupabaseStorage()
+    if supabase_storage.connected:
+        logger.info("✅ Supabase connecté (via REST API)")
+    else:
+        supabase_storage = None
+        logger.warning("⚠️ Supabase non connecté, fallback sur JSON")
+except ImportError:
+    supabase_storage = None
+    logger.warning("⚠️ SupabaseStorage non disponible, fallback sur JSON")
+except Exception as e:
+    supabase_storage = None
+    logger.warning(f"⚠️ Erreur Supabase: {e}, fallback sur JSON")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -147,16 +162,6 @@ total_reports = stats_data.get("total_reports", 0)
 
 logger.info(f"📊 Statistiques chargées: Analyses={total_analyses}, Alertes={total_alerts}, Reports={total_reports}")
 logger.info(f"📊 Historique chargé: {len(load_history())} analyses")
-
-# ===== INITIALISATION SUPABASE =====
-supabase_storage = SupabaseStorage()
-if supabase_storage.connected:
-    logger.info("✅ Supabase connecté")
-    # Tester la connexion
-    stats = supabase_storage.get_stats()
-    logger.info(f"📊 Stats Supabase: {stats}")
-else:
-    logger.warning("⚠️ Supabase non connecté, fallback sur JSON")
 
 # ===== CORS CONFIGURATION SÉCURISÉE =====
 app.add_middleware(
@@ -543,15 +548,17 @@ async def handle_telegram_command(text: str, message_id: str):
         elif command == '/status':
             status = "🟢 **En ligne**" if telegram_running else "🔴 **Hors ligne**"
             
-            # Récupérer les stats depuis Supabase ou local
+            # Récupérer les stats (Supabase ou local)
             if supabase_storage and supabase_storage.connected:
                 stats = supabase_storage.get_stats()
                 total_analyses = stats.get('total_analyses', 0)
                 total_alerts = stats.get('total_alerts', 0)
+                storage_type = "Supabase"
             else:
                 stats_data = load_stats()
                 total_analyses = stats_data.get("total_analyses", 0)
                 total_alerts = stats_data.get("total_alerts", 0)
+                storage_type = "Local JSON"
             
             await service.client.send_message(
                 channel,
@@ -562,7 +569,7 @@ async def handle_telegram_command(text: str, message_id: str):
                 f"📈 Analyses totales : {total_analyses}\n"
                 f"🔔 Alertes : {total_alerts}\n"
                 f"📊 Rapports : {total_reports}\n"
-                f"📁 Stockage : {'Supabase' if supabase_storage and supabase_storage.connected else 'Local JSON'}"
+                f"📁 Stockage : {storage_type}"
             )
             logger.info("✅ Commande /status envoyée")
             
@@ -650,8 +657,6 @@ async def process_market_analysis(text: str, message_id: str, date):
         total_analyses += 1
         stats_data["total_analyses"] = total_analyses
         stats_data["last_update"] = datetime.now().isoformat()
-        
-        # Sauvegarder dans stats.json (fallback)
         save_stats(stats_data)
         logger.info(f"📊 Total analyses: {total_analyses}")
         
@@ -691,15 +696,12 @@ async def process_market_analysis(text: str, message_id: str, date):
                 "summary": analysis.get("summary", "") or analysis.get("reason", ""),
                 "confidence": analysis.get("confidence", "medium")
             }
-            
-            # Ajouter les champs au niveau racine pour Supabase
             analysis_data["asset"] = analysis.get("asset", "OTHER")
             analysis_data["impact"] = analysis.get("impact", "neutral")
             analysis_data["score"] = score
             analysis_data["summary"] = analysis.get("summary", "") or analysis.get("reason", "")
             
         else:
-            # Fallback si DeepSeek échoue
             analysis_data["analysis"] = {
                 "asset": "OTHER",
                 "impact": "neutral",
@@ -720,9 +722,6 @@ async def process_market_analysis(text: str, message_id: str, date):
             supabase_success = supabase_storage.save_analysis(analysis_data)
             if supabase_success:
                 logger.info("✅ Analyse sauvegardée sur Supabase")
-                # Mettre à jour les stats Supabase
-                stats = supabase_storage.get_stats()
-                logger.info(f"📊 Stats Supabase: {stats}")
             else:
                 logger.error("❌ Échec de la sauvegarde sur Supabase")
         
@@ -951,12 +950,13 @@ async def send_test_message():
         if not channel:
             channel = os.getenv("TELEGRAM_CHANNEL", "@Trading_longterme_bot")
         
+        storage_type = "☁️ Supabase" if (supabase_storage and supabase_storage.connected) else "💾 Local"
         await service.client.send_message(
             channel,
-            "🧪 **Message de test**\n\n"
+            f"🧪 **Message de test**\n\n"
             "Le bot LongTerm AI est actif !\n"
             f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"📁 Stockage: {'☁️ Supabase' if supabase_storage and supabase_storage.connected else '💾 Local'}"
+            f"📁 Stockage: {storage_type}"
         )
         return {"success": True, "message": "Message de test envoyé"}
     except Exception as e:
@@ -1171,7 +1171,7 @@ async def get_status():
                 })
             },
             "storage": {
-                "type": "Supabase" if supabase_storage and supabase_storage.connected else "Local JSON",
+                "type": "Supabase" if (supabase_storage and supabase_storage.connected) else "Local JSON",
                 "connected": supabase_storage and supabase_storage.connected
             },
             "stats": {
@@ -1271,7 +1271,7 @@ async def debug_files():
         return {"success": False, "error": str(e)}
 
 # ============================================
-# PAGES HTML (inchangées)
+# PAGES HTML
 # ============================================
 
 # ===== PAGE DE CONNEXION =====
@@ -2809,4 +2809,4 @@ if __name__ == "__main__":
     print("🤖 Bot 24h/7j actif en permanence")
     print("📁 Stockage: Supabase + Local (fallback)")
     print("=" * 50)
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)s
