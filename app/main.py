@@ -2809,4 +2809,4 @@ if __name__ == "__main__":
     print("🤖 Bot 24h/7j actif en permanence")
     print("📁 Stockage: Supabase + Local (fallback)")
     print("=" * 50)
-    uvicorn.run(app, host="127.0.0.1", port=8000)s
+    uvicorn.run(app, host="127.0.0.1", port=8000)
