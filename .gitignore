@@ -41,4 +41,5 @@ analyses.json
 portfolio_data.json
 price_history.json
 settings.json
-config.json
+config.json"session/*.session" 
+"session/*.session-journal" 
