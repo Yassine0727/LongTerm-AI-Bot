@@ -1,184 +1,123 @@
-# app/supabase_storage.py
-from supabase import create_client, Client
+# app/supabase_storage.py - Version avec requests uniquement
 import os
+import requests
+import json
 import logging
 from datetime import datetime
-import json
 
 logger = logging.getLogger(__name__)
 
 class SupabaseStorage:
     def __init__(self):
-        # Récupérer les variables d'environnement
         self.url = os.getenv('SUPABASE_URL')
-        self.key = os.getenv('SUPABASE_KEY')  # La SECRET KEY
-        
-        self.supabase = None
+        self.key = os.getenv('SUPABASE_KEY')
         self.connected = False
         
-        if not self.url:
-            logger.error("❌ SUPABASE_URL non configuré")
+        if not self.url or not self.key:
+            logger.warning("⚠️ SUPABASE_URL ou SUPABASE_KEY non configuré")
             return
         
-        if not self.key:
-            logger.error("❌ SUPABASE_KEY non configuré")
-            logger.info("   Utilisez la SECRET KEY (sb_secret_...) pas la publishable")
-            return
+        self.headers = {
+            'apikey': self.key,
+            'Authorization': f'Bearer {self.key}',
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+        }
         
         try:
-            # Nettoyer la clé (supprimer les espaces et retours à la ligne)
-            self.key = self.key.strip()
-            
-            # Créer le client
-            self.supabase = create_client(self.url, self.key)
-            self.connected = True
-            logger.info("✅ Supabase connecté avec la SECRET KEY")
-            
             # Tester la connexion
-            test = self.supabase.table('analyses').select('count').limit(1).execute()
-            logger.info("✅ Test de connexion Supabase réussi")
-            
+            test_url = f"{self.url}/rest/v1/stats?limit=1"
+            response = requests.get(test_url, headers=self.headers, timeout=5)
+            self.connected = True
+            logger.info("✅ Supabase connecté (via REST API)")
         except Exception as e:
-            logger.error(f"❌ Erreur connexion Supabase: {e}")
-            logger.info("   Vérifiez que la clé est correcte et que RLS est configuré")
+            logger.warning(f"⚠️ Supabase non disponible: {e}")
+    
+    def _request(self, method, endpoint, data=None):
+        try:
+            url = f"{self.url}/rest/v1/{endpoint}"
+            response = requests.request(method, url, headers=self.headers, json=data, timeout=10)
+            
+            if response.status_code in [200, 201]:
+                return response.json()
+            elif response.status_code == 404:
+                return None
+            else:
+                logger.error(f"❌ Erreur Supabase: {response.status_code} - {response.text[:100]}")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Erreur requête: {e}")
+            return None
     
     def save_analysis(self, analysis_data):
-        """Sauvegarde une analyse dans Supabase"""
+        if not self.connected:
+            return False
+        
         try:
-            if not self.connected:
-                logger.error("❌ Supabase non connecté")
-                return False
-            
-            # Préparer les données
             data = {
-                'id': analysis_data.get('id', f"analysis_{datetime.now().timestamp()}"),
+                'id': analysis_data.get('id', f"analysis_{int(datetime.now().timestamp())}"),
                 'timestamp': analysis_data.get('timestamp', datetime.now().isoformat()),
                 'asset': analysis_data.get('asset', 'UNKNOWN'),
                 'impact': analysis_data.get('impact', 'neutral'),
                 'score': analysis_data.get('score', 0),
                 'summary': analysis_data.get('summary', ''),
-                'analysis': analysis_data.get('analysis', {}),
-                'message_id': analysis_data.get('message_id', ''),
-                'source': 'telegram'
+                'analysis': json.dumps(analysis_data.get('analysis', {})),
+                'message_id': analysis_data.get('message_id', '')
             }
             
-            # Insérer dans Supabase
-            result = self.supabase.table('analyses').insert(data).execute()
-            
-            if result.data:
-                logger.info(f"✅ Analyse sauvegardée dans Supabase: {result.data[0]['id']}")
-                
-                # Incrémenter les stats
-                try:
-                    # Récupérer les stats actuelles
-                    stats_result = self.supabase.table('stats').select('*').eq('key', 'total_analyses').execute()
-                    
-                    if stats_result.data:
-                        current = stats_result.data[0]['value']
-                        self.supabase.table('stats').update({
-                            'value': current + 1,
-                            'updated_at': datetime.now().isoformat()
-                        }).eq('key', 'total_analyses').execute()
-                    else:
-                        self.supabase.table('stats').insert({
-                            'key': 'total_analyses',
-                            'value': 1,
-                            'updated_at': datetime.now().isoformat()
-                        }).execute()
-                except Exception as e:
-                    logger.error(f"❌ Erreur mise à jour stats: {e}")
-                
+            result = self._request('POST', 'analyses', data)
+            if result:
+                logger.info("✅ Analyse sauvegardée dans Supabase")
                 return True
-            else:
-                logger.error(f"❌ Erreur sauvegarde: {result}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Erreur sauvegarde Supabase: {e}")
             return False
-    
-    def save_stats(self, stats_data):
-        """Sauvegarde les statistiques personnalisées"""
-        try:
-            if not self.connected:
-                return False
-            
-            for key, value in stats_data.items():
-                result = self.supabase.table('stats').upsert({
-                    'key': key,
-                    'value': value,
-                    'updated_at': datetime.now().isoformat()
-                }).execute()
-            
-            logger.info("✅ Stats sauvegardées")
-            return True
-            
         except Exception as e:
-            logger.error(f"❌ Erreur sauvegarde stats: {e}")
+            logger.error(f"❌ Erreur sauvegarde: {e}")
             return False
     
     def get_analyses(self, limit=20, offset=0):
-        """Récupère les dernières analyses"""
-        try:
-            if not self.connected:
-                return []
-            
-            result = self.supabase.table('analyses')\
-                .select('*')\
-                .order('timestamp', desc=True)\
-                .range(offset, offset + limit - 1)\
-                .execute()
-            
-            return result.data if result.data else []
-            
-        except Exception as e:
-            logger.error(f"❌ Erreur récupération analyses: {e}")
+        if not self.connected:
             return []
-    
-    def get_analyses_by_asset(self, asset, limit=20):
-        """Récupère les analyses par actif"""
+        
         try:
-            if not self.connected:
-                return []
-            
-            result = self.supabase.table('analyses')\
-                .select('*')\
-                .eq('asset', asset)\
-                .order('timestamp', desc=True)\
-                .limit(limit)\
-                .execute()
-            
-            return result.data if result.data else []
-            
+            endpoint = f"analyses?order=timestamp.desc&limit={limit}&offset={offset}"
+            result = self._request('GET', endpoint)
+            return result if result else []
         except Exception as e:
             logger.error(f"❌ Erreur: {e}")
             return []
     
     def get_stats(self):
-        """Récupère toutes les statistiques"""
-        try:
-            if not self.connected:
-                return {}
-            
-            result = self.supabase.table('stats').select('*').execute()
-            
-            if result.data:
-                return {item['key']: item['value'] for item in result.data}
+        if not self.connected:
             return {}
-            
+        
+        try:
+            result = self._request('GET', 'stats')
+            if result:
+                return {item['key']: item['value'] for item in result}
+            return {}
         except Exception as e:
-            logger.error(f"❌ Erreur récupération stats: {e}")
+            logger.error(f"❌ Erreur: {e}")
             return {}
     
     def get_total_count(self):
-        """Récupère le nombre total d'analyses"""
+        if not self.connected:
+            return 0
+        
         try:
-            if not self.connected:
-                return 0
-            
-            result = self.supabase.table('analyses').select('id', count='exact').execute()
-            return result.count if hasattr(result, 'count') else 0
-            
+            result = self._request('GET', 'analyses?select=id')
+            return len(result) if result else 0
         except Exception as e:
             logger.error(f"❌ Erreur: {e}")
             return 0
+    
+    def get_analyses_by_asset(self, asset, limit=20):
+        if not self.connected:
+            return []
+        
+        try:
+            endpoint = f"analyses?asset=eq.{asset}&order=timestamp.desc&limit={limit}"
+            result = self._request('GET', endpoint)
+            return result if result else []
+        except Exception as e:
+            logger.error(f"❌ Erreur: {e}")
+            return []
