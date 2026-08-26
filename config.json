@@ -8,7 +8,7 @@
   },
   "telegram_channels": [
     {
-      "channel": "@testbot1252",
+      "channel": "@Crypto_News95",
       "active": true
     },
     {
@@ -16,7 +16,7 @@
       "active": true
     },
     {
-      "channel": "@Crypto_News95",
+      "channel": "@testbot1252",
       "active": true
     }
   ]
